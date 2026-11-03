@@ -986,7 +986,6 @@ impl EggDoneApp {
             }
         });
     }
-
     fn render_quadrant_box(&mut self, ui: &mut egui::Ui, title: &str, head_bg: Color32, body_bg: Color32, q_num: u8, today_s: &str) {
         let tasks: Vec<TodoTask> = self.todos.iter()
             .filter(|t| t.hide_until.as_ref().map(|h| today_s >= h.as_str()).unwrap_or(true))
@@ -997,53 +996,84 @@ impl EggDoneApp {
         egui::Frame::none()
             .fill(body_bg)
             .rounding(Rounding::same(10.0))
-            .stroke(Stroke::new(1.0, head_bg))
+            .stroke(Stroke::new(1.0_f32, head_bg))
             .inner_margin(egui::Margin::same(6.0))
             .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.set_height(ui.available_height());
+
+                // 顶部标题栏：左标题 + 右侧精简数量，绝不挤压变形
                 egui::Frame::none()
                     .fill(head_bg)
                     .rounding(Rounding::same(6.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                    .inner_margin(egui::Margin::symmetric(6.0, 4.0))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        ui.label(RichText::new(format!("{} ({})", title, tasks.len())).size(11.5).strong().color(Color32::from_rgb(38, 50, 56)));
+                        ui.horizontal(|ui| {
+                            ui.label(RichText::new(title).size(11.5).strong().color(Color32::from_rgb(38, 50, 56)));
+                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                ui.label(RichText::new(format!("{}", tasks.len())).size(11.0).strong().color(Color32::from_rgb(90, 110, 90)));
+                            });
+                        });
                     });
+
                 ui.add_space(4.0);
-                egui::ScrollArea::vertical().id_source(format!("quad_scroll_{}", q_num)).show(ui, |ui| {
-                    if tasks.is_empty() {
-                        ui.add_space(20.0);
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new("暂无事项").size(11.5).color(Color32::from_rgb(160, 160, 160)));
-                        });
-                    }
-                    for t in tasks {
-                        let is_p = self.pending_confirm.contains_key(&t.uuid);
-                        let mut lbl = if is_p { format!("✔️ 待确认: {}", t.text) } else { format!("◯ {}", t.text) };
-                        if let Some(ref tm) = t.due_time { lbl.push_str(&format!(" 🕒{}", tm)); }
-                        let col = if is_p { Color32::from_rgb(21, 101, 192) } else { Color32::from_rgb(45, 55, 60) };
-                        let r = ui.add(egui::Label::new(RichText::new(lbl).size(12.0).color(col)).wrap(true).sense(Sense::click()));
-                        let r = r.on_hover_text(format!("任务详情：\n{}", t.text));
-                        if r.clicked() {
-                            if is_p { self.complete_task(&t.uuid); } else { self.pending_confirm.insert(t.uuid.clone(), Instant::now()); }
+
+                // 象限内部独立滚动任务列表（自动折行显示完整任务）
+                egui::ScrollArea::vertical()
+                    .id_source(format!("quad_scroll_{}", q_num))
+                    .auto_shrink([false, false])
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if tasks.is_empty() {
+                            ui.add_space(28.0);
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new("暂无事项").size(11.0).color(Color32::from_rgb(175, 185, 175)));
+                            });
                         }
-                        r.context_menu(|ui| {
-                            if ui.button("🎯 设为专注目标").clicked() {
-                                self.current_focus_task = Some((t.uuid.clone(), t.text.clone()));
-                                self.current_tab = ViewTab::Forest;
-                                ui.close_menu();
+                        for t in tasks {
+                            let is_p = self.pending_confirm.contains_key(&t.uuid);
+                            let mut lbl = if is_p { format!("✔️ {}", t.text) } else { format!("◯ {}", t.text) };
+                            if let Some(ref tm) = t.due_time {
+                                lbl.push_str(&format!(" 🕒{}", tm));
                             }
-                            if ui.button("➡️ 延后一天").clicked() { self.postpone_task(&t.uuid); ui.close_menu(); }
-                            if ui.button("✏️ 编辑事项").clicked() { self.open_task_editor(&t); ui.close_menu(); }
-                            if ui.button(RichText::new("🗑️ 删除事项").color(Color32::RED)).clicked() {
-                                self.confirm_delete_task = Some((t.uuid.clone(), t.text.clone()));
-                                ui.close_menu();
+                            let col = if is_p { Color32::from_rgb(21, 101, 192) } else { Color32::from_rgb(45, 55, 60) };
+
+                            let r = ui.add(
+                                egui::Label::new(RichText::new(lbl).size(11.5).color(col))
+                                    .wrap(true)
+                                    .sense(Sense::click()),
+                            );
+                            let r = r.on_hover_text(format!("点击两次完成 | 右键更多操作\n事项：{}", t.text));
+                            if r.clicked() {
+                                if is_p {
+                                    self.complete_task(&t.uuid);
+                                } else {
+                                    self.pending_confirm.insert(t.uuid.clone(), Instant::now());
+                                }
                             }
-                        });
-                        ui.add_space(3.0);
-                    }
-                });
+                            r.context_menu(|ui| {
+                                if ui.button("🎯 设为专注目标").clicked() {
+                                    self.current_focus_task = Some((t.uuid.clone(), t.text.clone()));
+                                    self.current_tab = ViewTab::Forest;
+                                    ui.close_menu();
+                                }
+                                if ui.button("➡️ 延后一天").clicked() {
+                                    self.postpone_task(&t.uuid);
+                                    ui.close_menu();
+                                }
+                                if ui.button("✏️ 编辑事项").clicked() {
+                                    self.open_task_editor(&t);
+                                    ui.close_menu();
+                                }
+                                if ui.button(RichText::new("🗑️ 删除事项").color(Color32::RED)).clicked() {
+                                    self.confirm_delete_task = Some((t.uuid.clone(), t.text.clone()));
+                                    ui.close_menu();
+                                }
+                            });
+                            ui.add_space(4.0);
+                        }
+                    });
             });
     }
 
@@ -1051,73 +1081,76 @@ impl EggDoneApp {
         // 1. 专注休息弹窗个性化设置器
         if self.show_popup_settings_modal {
             let mut open = true;
-            egui::Window::new("🔔 休息提醒弹窗自定义设置")
+            egui::Window::new("🔔 休息提醒弹窗设置")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .fixed_size(Vec2::new(330.0, 420.0))
+                .fixed_size(Vec2::new(336.0, 430.0))
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    egui::Grid::new("popup_cfg_grid").num_columns(2).spacing([8.0, 10.0]).show(ui, |ui| {
-                        ui.label("弹出位置:");
-                        egui::ComboBox::from_id_source("cb_popup_pos")
-                            .selected_text(match self.config.popup_position.as_str() {
-                                "top_right" => "↗️ 屏幕右上角",
-                                "bottom_right" => "↘️ 屏幕右下角",
-                                "top_left" => "↖️ 屏幕左上角",
-                                "bottom_left" => "↙️ 屏幕左下角",
-                                "custom" => "📍 自定义屏幕坐标",
-                                _ => "🎯 屏幕正中央 (推荐)",
-                            })
-                            .show_ui(ui, |ui| {
-                                ui.selectable_value(&mut self.config.popup_position, "center".into(), "🎯 屏幕正中央 (推荐)");
-                                ui.selectable_value(&mut self.config.popup_position, "top_right".into(), "↗️ 屏幕右上角");
-                                ui.selectable_value(&mut self.config.popup_position, "bottom_right".into(), "↘️ 屏幕右下角");
-                                ui.selectable_value(&mut self.config.popup_position, "top_left".into(), "↖️ 屏幕左上角");
-                                ui.selectable_value(&mut self.config.popup_position, "bottom_left".into(), "↙️ 屏幕左下角");
-                                ui.selectable_value(&mut self.config.popup_position, "custom".into(), "📍 自定义屏幕坐标");
-                            });
-                        ui.end_row();
+                    egui::Grid::new("popup_cfg_grid")
+                        .num_columns(2)
+                        .spacing([8.0, 10.0])
+                        .show(ui, |ui| {
+                            ui.label("弹出位置:");
+                            egui::ComboBox::from_id_source("cb_popup_pos")
+                                .selected_text(match self.config.popup_position.as_str() {
+                                    "top_right" => "↗️ 屏幕右上角",
+                                    "bottom_right" => "↘️ 屏幕右下角",
+                                    "top_left" => "↖️ 屏幕左上角",
+                                    "bottom_left" => "↙️ 屏幕左下角",
+                                    "custom" => "📍 自定义屏幕坐标",
+                                    _ => "🎯 屏幕正中央 (推荐)",
+                                })
+                                .show_ui(ui, |ui| {
+                                    ui.selectable_value(&mut self.config.popup_position, "center".into(), "🎯 屏幕正中央 (推荐)");
+                                    ui.selectable_value(&mut self.config.popup_position, "top_right".into(), "↗️ 屏幕右上角");
+                                    ui.selectable_value(&mut self.config.popup_position, "bottom_right".into(), "↘️ 屏幕右下角");
+                                    ui.selectable_value(&mut self.config.popup_position, "top_left".into(), "↖️ 屏幕左上角");
+                                    ui.selectable_value(&mut self.config.popup_position, "bottom_left".into(), "↙️ 屏幕左下角");
+                                    ui.selectable_value(&mut self.config.popup_position, "custom".into(), "📍 自定义屏幕坐标");
+                                });
+                            ui.end_row();
 
-                        if self.config.popup_position == "custom" {
-                            ui.label("自定义坐标:");
+                            if self.config.popup_position == "custom" {
+                                ui.label("自定义坐标:");
+                                ui.horizontal(|ui| {
+                                    ui.label("X:");
+                                    ui.add(egui::DragValue::new(&mut self.config.popup_custom_x).clamp_range(0.0..=3840.0).speed(2.0));
+                                    ui.label("Y:");
+                                    ui.add(egui::DragValue::new(&mut self.config.popup_custom_y).clamp_range(0.0..=2160.0).speed(2.0));
+                                });
+                                ui.end_row();
+                            }
+
+                            ui.label("弹窗宽高:");
                             ui.horizontal(|ui| {
-                                ui.label("X:");
-                                ui.add(egui::DragValue::new(&mut self.config.popup_custom_x).clamp_range(0.0..=3840.0).speed(2.0));
-                                ui.label("Y:");
-                                ui.add(egui::DragValue::new(&mut self.config.popup_custom_y).clamp_range(0.0..=2160.0).speed(2.0));
+                                ui.label("宽:");
+                                ui.add(egui::DragValue::new(&mut self.config.popup_width).clamp_range(240.0..=700.0).speed(2.0));
+                                ui.label("高:");
+                                ui.add(egui::DragValue::new(&mut self.config.popup_height).clamp_range(220.0..=550.0).speed(2.0));
                             });
                             ui.end_row();
-                        }
 
-                        ui.label("弹窗宽高:");
-                        ui.horizontal(|ui| {
-                            ui.label("宽:");
-                            ui.add(egui::DragValue::new(&mut self.config.popup_width).clamp_range(240.0..=700.0).speed(2.0));
-                            ui.label("高:");
-                            ui.add(egui::DragValue::new(&mut self.config.popup_height).clamp_range(220.0..=550.0).speed(2.0));
+                            ui.label("弹窗标题:");
+                            ui.text_edit_singleline(&mut self.config.popup_title);
+                            ui.end_row();
+
+                            ui.label("标题字号:");
+                            ui.add(egui::Slider::new(&mut self.config.popup_title_size, 14.0..=36.0).suffix(" px"));
+                            ui.end_row();
+
+                            ui.label("正文字号:");
+                            ui.add(egui::Slider::new(&mut self.config.popup_font_size, 12.0..=28.0).suffix(" px"));
+                            ui.end_row();
                         });
-                        ui.end_row();
-
-                        ui.label("弹窗标题:");
-                        ui.text_edit_singleline(&mut self.config.popup_title);
-                        ui.end_row();
-
-                        ui.label("标题字号:");
-                        ui.add(egui::Slider::new(&mut self.config.popup_title_size, 14.0..=36.0).suffix(" px"));
-                        ui.end_row();
-
-                        ui.label("正文字号:");
-                        ui.add(egui::Slider::new(&mut self.config.popup_font_size, 12.0..=28.0).suffix(" px"));
-                        ui.end_row();
-                    });
 
                     ui.add_space(6.0);
                     ui.label("休息提示词 (支持多行回车):");
                     ui.add(egui::TextEdit::multiline(&mut self.config.popup_message).desired_rows(3).desired_width(f32::INFINITY));
-
                     ui.add_space(10.0);
+
                     ui.horizontal(|ui| {
                         if ui.button("👁️ 立即预览弹窗效果").clicked() {
                             self.save_all_data();
@@ -1133,98 +1166,114 @@ impl EggDoneApp {
                         });
                     });
                 });
-            if !open { self.show_popup_settings_modal = false; }
+            if !open {
+                self.show_popup_settings_modal = false;
+            }
         }
 
         // 2. 编辑/新建事项与周期计划弹窗
         let mut save_state = None;
         let mut close_edit = false;
         if let Some(ref mut st) = self.edit_modal {
-            let win_title = if st.is_new_plan { "➕ 添加周期计划" } else if st.is_plan { "✏️ 编辑周期计划" } else { "✏️ 编辑事项" };
+            let win_title = if st.is_new_plan {
+                "➕ 添加周期计划"
+            } else if st.is_plan {
+                "✏️ 编辑周期计划"
+            } else {
+                "✏️ 编辑事项"
+            };
             egui::Window::new(win_title)
                 .collapsible(false)
                 .resizable(false)
-                .fixed_size(Vec2::new(320.0, 340.0))
+                .fixed_size(Vec2::new(330.0, 340.0))
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.add_space(4.0);
-                    egui::Grid::new("edit_form_grid").num_columns(2).spacing([10.0, 10.0]).show(ui, |ui| {
-                        ui.label("事项名称:");
-                        ui.text_edit_singleline(&mut st.title);
-                        ui.end_row();
-
-                        ui.label("优先级:");
-                        ui.checkbox(&mut st.priority, "⭐ 标记为重要事项");
-                        ui.end_row();
-
-                        ui.label("截止日期:");
-                        if st.is_plan {
-                            ui.label(RichText::new("(由周期引擎自动派发)").size(11.5).color(Color32::GRAY));
-                        } else {
-                            ui.horizontal(|ui| {
-                                ui.checkbox(&mut st.has_due, "");
-                                ui.add_enabled_ui(st.has_due, |ui| {
-                                    ui.add(egui::DragValue::new(&mut st.due_year).clamp_range(2024..=2035).suffix("年"));
-                                    ui.add(egui::DragValue::new(&mut st.due_month).clamp_range(1..=12).suffix("月"));
-                                    ui.add(egui::DragValue::new(&mut st.due_day).clamp_range(1..=31).suffix("日"));
-                                });
-                            });
-                        }
-                        ui.end_row();
-
-                        ui.label("截止时刻:");
-                        ui.horizontal(|ui| {
-                            ui.checkbox(&mut st.has_time, "");
-                            ui.add_enabled_ui(st.has_time, |ui| {
-                                ui.add(egui::DragValue::new(&mut st.time_hour).clamp_range(0..=23).suffix("时"));
-                                ui.label(":");
-                                ui.add(egui::DragValue::new(&mut st.time_min).clamp_range(0..=59).suffix("分"));
-                            });
-                        });
-                        ui.end_row();
-
-                        if st.is_periodic_instance {
-                            ui.label("周期说明:");
-                            ui.label(RichText::new("单次实例，仅改本次时间与名称").size(11.0).color(Color32::from_rgb(230, 81, 0)));
-                            ui.end_row();
-                        } else {
-                            ui.label("重复规则:");
-                            egui::ComboBox::from_id_source("cb_repeat_rule")
-                                .selected_text(match st.repeat_rule.as_str() {
-                                    "daily" => "每天",
-                                    "weekdays" => "工作日 (周一至周五)",
-                                    "weekly" => "每周 (指定周几)",
-                                    "monthly" => "每月 (指定几号)",
-                                    _ => "不重复",
-                                })
-                                .show_ui(ui, |ui| {
-                                    if !st.is_plan { ui.selectable_value(&mut st.repeat_rule, "none".to_string(), "不重复"); }
-                                    ui.selectable_value(&mut st.repeat_rule, "daily".to_string(), "每天");
-                                    ui.selectable_value(&mut st.repeat_rule, "weekdays".to_string(), "工作日 (周一至周五)");
-                                    ui.selectable_value(&mut st.repeat_rule, "weekly".to_string(), "每周 (指定周几)");
-                                    ui.selectable_value(&mut st.repeat_rule, "monthly".to_string(), "每月 (指定几号)");
-                                });
+                    egui::Grid::new("edit_form_grid")
+                        .num_columns(2)
+                        .spacing([10.0, 10.0])
+                        .show(ui, |ui| {
+                            ui.label("事项名称:");
+                            ui.text_edit_singleline(&mut st.title);
                             ui.end_row();
 
-                            if st.repeat_rule == "weekly" {
-                                ui.label("具体星期:");
-                                ui.horizontal_wrapped(|ui| {
-                                    for (i, w) in ["一", "二", "三", "四", "五", "六", "日"].iter().enumerate() {
-                                        ui.checkbox(&mut st.weekly_checked[i], *w);
-                                    }
+                            ui.label("优先级:");
+                            ui.checkbox(&mut st.priority, "⭐ 标记为重要事项");
+                            ui.end_row();
+
+                            ui.label("截止日期:");
+                            if st.is_plan {
+                                ui.label(RichText::new("(由周期引擎自动派发)").size(11.5).color(Color32::GRAY));
+                            } else {
+                                ui.horizontal(|ui| {
+                                    ui.checkbox(&mut st.has_due, "");
+                                    ui.add_enabled_ui(st.has_due, |ui| {
+                                        ui.add(egui::DragValue::new(&mut st.due_year).clamp_range(2024..=2035).suffix("年"));
+                                        ui.add(egui::DragValue::new(&mut st.due_month).clamp_range(1..=12).suffix("月"));
+                                        ui.add(egui::DragValue::new(&mut st.due_day).clamp_range(1..=31).suffix("日"));
+                                    });
                                 });
-                                ui.end_row();
-                            } else if st.repeat_rule == "monthly" {
-                                ui.label("具体几号:");
-                                ui.add(egui::TextEdit::singleline(&mut st.monthly_str).hint_text("如: 1, 15, 31"));
-                                ui.end_row();
                             }
-                        }
-                    });
+                            ui.end_row();
+
+                            ui.label("截止时刻:");
+                            ui.horizontal(|ui| {
+                                ui.checkbox(&mut st.has_time, "");
+                                ui.add_enabled_ui(st.has_time, |ui| {
+                                    ui.add(egui::DragValue::new(&mut st.time_hour).clamp_range(0..=23).suffix("时"));
+                                    ui.label(":");
+                                    ui.add(egui::DragValue::new(&mut st.time_min).clamp_range(0..=59).suffix("分"));
+                                });
+                            });
+                            ui.end_row();
+
+                            if st.is_periodic_instance {
+                                ui.label("周期说明:");
+                                ui.label(RichText::new("单次实例，仅改本次时间与名称").size(11.0).color(Color32::from_rgb(230, 81, 0)));
+                                ui.end_row();
+                            } else {
+                                ui.label("重复规则:");
+                                egui::ComboBox::from_id_source("cb_repeat_rule")
+                                    .selected_text(match st.repeat_rule.as_str() {
+                                        "daily" => "每天",
+                                        "weekdays" => "工作日",
+                                        "weekly" => "每周",
+                                        "monthly" => "每月",
+                                        _ => "不重复",
+                                    })
+                                    .show_ui(ui, |ui| {
+                                        if !st.is_plan {
+                                            ui.selectable_value(&mut st.repeat_rule, "none".to_string(), "不重复");
+                                        }
+                                        ui.selectable_value(&mut st.repeat_rule, "daily".to_string(), "每天");
+                                        ui.selectable_value(&mut st.repeat_rule, "weekdays".to_string(), "工作日 (周一至周五)");
+                                        ui.selectable_value(&mut st.repeat_rule, "weekly".to_string(), "每周 (指定周几)");
+                                        ui.selectable_value(&mut st.repeat_rule, "monthly".to_string(), "每月 (指定几号)");
+                                    });
+                                ui.end_row();
+
+                                if st.repeat_rule == "weekly" {
+                                    ui.label("具体星期:");
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (i, w) in ["一", "二", "三", "四", "五", "六", "日"].iter().enumerate() {
+                                            ui.checkbox(&mut st.weekly_checked[i], *w);
+                                        }
+                                    });
+                                    ui.end_row();
+                                } else if st.repeat_rule == "monthly" {
+                                    ui.label("具体几号:");
+                                    ui.add(egui::TextEdit::singleline(&mut st.monthly_str).hint_text("如: 1, 15, 31"));
+                                    ui.end_row();
+                                }
+                            }
+                        });
+
                     ui.add_space(12.0);
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.button("取消").clicked() { close_edit = true; }
+                            if ui.button("取消").clicked() {
+                                close_edit = true;
+                            }
                             if ui.button(RichText::new("💾 保存").strong().color(Color32::from_rgb(46, 125, 50))).clicked() {
                                 save_state = Some(st.clone());
                             }
@@ -1232,114 +1281,304 @@ impl EggDoneApp {
                     });
                 });
         }
-        if close_edit { self.edit_modal = None; }
-        if let Some(st) = save_state { self.save_editor_changes(st); }
-                // 3. 历史归档记录弹窗
+        if close_edit {
+            self.edit_modal = None;
+        }
+        if let Some(st) = save_state {
+            self.save_editor_changes(st);
+        }
+
+        // 3. 历史归档记录弹窗（精准适配 344x550 满屏大气尺寸，不越界裁剪）
         if self.show_history_modal {
             let mut open = true;
             egui::Window::new("📜 已完成历史归档")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .fixed_size(Vec2::new(330.0, 440.0))
+                .fixed_size(Vec2::new(344.0, 550.0))
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
+                    let total_done = self.history.len();
                     let mut grouped: BTreeMap<String, Vec<(usize, HistoryRecord)>> = BTreeMap::new();
                     for (idx, item) in self.history.iter().enumerate() {
-                        let d_key = if item.completed.len() >= 10 { item.completed[..10].to_string() } else { "未知日期".to_string() };
+                        // 修复潜在的UTF-8切片崩溃隐患
+                        let d_key: String = item.completed.chars().take(10).collect();
+                        let d_key = if d_key.chars().count() == 10 { d_key } else { "未知日期".to_string() };
                         grouped.entry(d_key).or_default().push((idx, item.clone()));
                     }
-                    let mut restore_idx = None;
-                    egui::ScrollArea::vertical().max_height(380.0).show(ui, |ui| {
-                        if grouped.is_empty() {
-                            ui.vertical_centered(|ui| {
-                                ui.add_space(40.0);
-                                ui.label(RichText::new("暂无历史完成记录 🌱").color(Color32::GRAY));
+
+                    // 顶部总览横幅
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(232, 245, 233))
+                        .rounding(Rounding::same(8.0))
+                        .inner_margin(egui::Margin::symmetric(10.0, 6.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(format!("🏆 累计已完成 {} 项任务", total_done)).size(12.5).strong().color(Color32::from_rgb(27, 94, 32)));
+                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                    ui.label(RichText::new("右键或点击还原可恢复").size(10.5).color(Color32::from_rgb(96, 125, 139)));
+                                });
                             });
-                        }
-                        for (date_k, items) in grouped.into_iter().rev() {
-                            ui.add_space(4.0);
-                            ui.label(RichText::new(format!("📅 {} ({}项)", date_k, items.len())).strong().color(Color32::from_rgb(46, 125, 50)));
-                            for (orig_idx, h) in items.into_iter().rev() {
-                                let t_hm = if h.completed.len() >= 16 { &h.completed[11..16] } else { "" };
-                                let r = ui.add(egui::Label::new(RichText::new(format!("  ✓ [{}] {}", t_hm, h.text)).size(12.0)).sense(Sense::click()));
-                                r.context_menu(|ui| {
-                                    if ui.button("↩️ 还原至待办列表").clicked() {
-                                        restore_idx = Some(orig_idx);
-                                        ui.close_menu();
-                                    }
+                        });
+                    ui.add_space(6.0);
+
+                    let mut restore_idx = None;
+                    egui::ScrollArea::vertical()
+                        .id_source("history_modal_scroll")
+                        .max_height(465.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if grouped.is_empty() {
+                                ui.add_space(80.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new("📭 暂无历史完成记录\n去搞定今天的第一项待办吧！").size(13.0).color(Color32::GRAY));
                                 });
                             }
-                        }
-                    });
-                    if let Some(idx) = restore_idx {
-                        let item = self.history.remove(idx);
-                        let td = today_str();
-                        self.todos.insert(0, TodoTask {
-                            uuid: gen_uuid(),
-                            plan_uuid: item.plan_uuid,
-                            cycle_date: item.cycle_date.unwrap_or_else(|| td.clone()),
-                            text: item.text,
-                            priority: 0,
-                            due_date: item.due_date,
-                            original_due: None,
-                            due_time: None,
-                            reminder_time: None,
-                            repeat_rule: None,
-                            repeat_days: None,
-                            created: item.created.unwrap_or_else(now_iso),
-                            done: false,
-                            hide_until: None,
-                            notified: false,
+                            for (date_k, items) in grouped.into_iter().rev() {
+                                ui.add_space(6.0);
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgb(241, 248, 233))
+                                    .rounding(Rounding::same(6.0))
+                                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.label(RichText::new(format!("📅 {}  ({} 项)", date_k, items.len())).size(12.0).strong().color(Color32::from_rgb(46, 125, 50)));
+                                    });
+                                ui.add_space(4.0);
+
+                                for (orig_idx, h) in items.into_iter().rev() {
+                                    let t_hm: String = h.completed.chars().skip(11).take(5).collect();
+                                    egui::Frame::none()
+                                        .fill(Color32::WHITE)
+                                        .rounding(Rounding::same(8.0))
+                                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(225, 235, 225)))
+                                        .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                        .show(ui, |ui| {
+                                            ui.set_width(ui.available_width());
+                                            ui.horizontal(|ui| {
+                                                ui.label(RichText::new("✔️").size(12.5).color(Color32::from_rgb(67, 160, 71)));
+                                                ui.vertical(|ui| {
+                                                    ui.set_max_width(225.0);
+                                                    let r = ui.add(
+                                                        egui::Label::new(RichText::new(&h.text).size(12.5).color(Color32::from_rgb(45, 55, 60)))
+                                                            .wrap(true)
+                                                            .sense(Sense::click()),
+                                                    );
+                                                    if !t_hm.is_empty() {
+                                                        ui.label(RichText::new(format!("🕒 完成于 {}", t_hm)).size(10.5).color(Color32::GRAY));
+                                                    }
+                                                    r.context_menu(|ui| {
+                                                        if ui.button("↩️ 还原至待办列表").clicked() {
+                                                            restore_idx = Some(orig_idx);
+                                                            ui.close_menu();
+                                                        }
+                                                    });
+                                                });
+                                                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                    if ui.small_button("↩️ 还原").on_hover_text("将此事项恢复到未完成待办列表").clicked() {
+                                                        restore_idx = Some(orig_idx);
+                                                    }
+                                                });
+                                            });
+                                        });
+                                    ui.add_space(4.0);
+                                }
+                            }
                         });
-                        self.sort_todos();
-                        self.save_all_data();
-                        self.show_toast("↩️ 已成功还原至待办列表");
+
+                    if let Some(idx) = restore_idx {
+                        if idx < self.history.len() {
+                            let item = self.history.remove(idx);
+                            let td = today_str();
+                            self.todos.insert(
+                                0,
+                                TodoTask {
+                                    uuid: gen_uuid(),
+                                    plan_uuid: item.plan_uuid,
+                                    cycle_date: item.cycle_date.unwrap_or_else(|| td.clone()),
+                                    text: item.text,
+                                    priority: 0,
+                                    due_date: item.due_date,
+                                    original_due: None,
+                                    due_time: None,
+                                    reminder_time: None,
+                                    repeat_rule: None,
+                                    repeat_days: None,
+                                    created: item.created.unwrap_or_else(now_iso),
+                                    done: false,
+                                    hide_until: None,
+                                    notified: false,
+                                },
+                            );
+                            self.sort_todos();
+                            self.save_all_data();
+                            self.show_toast("↩️ 已成功还原至待办列表");
+                        }
                     }
                 });
-            if !open { self.show_history_modal = false; }
+            if !open {
+                self.show_history_modal = false;
+            }
         }
 
-        // 4. 森林专注统计弹窗
+        // 4. 森林专注统计弹窗（勋章成就感看板 + 344x550 满屏尺寸）
         if self.show_forest_stats_modal {
             let mut open = true;
-            egui::Window::new("🌲 我的专注森林统计")
+            egui::Window::new("🌲 我的专注森林档案")
                 .open(&mut open)
                 .collapsible(false)
                 .resizable(false)
-                .fixed_size(Vec2::new(320.0, 390.0))
+                .fixed_size(Vec2::new(344.0, 550.0))
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     let records: Vec<ForestRecord> = safe_json_load("forest.json");
                     let healthy_cnt = records.iter().filter(|r| r.status == "healthy").count();
                     let withered_cnt = records.iter().filter(|r| r.status == "withered").count();
                     let total_mins: u32 = records.iter().filter(|r| r.status == "healthy").map(|r| r.minutes).sum();
+                    let total_hours = total_mins as f32 / 60.0;
+                    let total_sessions = healthy_cnt + withered_cnt;
+                    let success_rate = if total_sessions > 0 { (healthy_cnt * 100) / total_sessions } else { 100 };
 
-                    ui.horizontal_centered(|ui| {
-                        ui.label(RichText::new(format!("🌲 健康树: {} 棵   🥀 枯萎: {} 棵   ⏱️ 累计: {} 分钟", healthy_cnt, withered_cnt, total_mins)).strong().color(Color32::from_rgb(46, 125, 50)));
-                    });
-                    ui.separator();
-                    egui::ScrollArea::vertical().max_height(310.0).show(ui, |ui| {
-                        for r in records.iter().rev() {
-                            let icon = if r.status == "healthy" { "🌲" } else { "🥀" };
-                            let ts = if r.timestamp.len() >= 16 { &r.timestamp[..16] } else { &r.timestamp };
-                            ui.label(format!("{} [{}] {} ({}分钟)", icon, ts.replace('T', " "), r.task, r.minutes));
-                            ui.add_space(2.0);
-                        }
-                    });
+                    // 森林等级称号计算 (已修复上一版的拼写错误)
+                    let let_rank_title = match healthy_cnt {
+                        0 => "🌱 初入森林 · 播下第一颗绿种吧",
+                        1..=4 => "🌿 护林新星 · 绿意正在悄悄萌芽",
+                        5..=14 => "🌳 森林行者 · 专注已成自然习惯",
+                        15..=29 => "🏞️ 绿洲领主 · 你拥有一片茂密森林",
+                        _ => "👑 森林守护神 · 极致自律的掌控者",
+                    };
+
+                    // 顶部勋章与三大核心数据面板
+                    egui::Frame::none()
+                        .fill(Color32::from_rgb(232, 245, 233))
+                        .rounding(Rounding::same(10.0))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(165, 214, 167)))
+                        .inner_margin(egui::Margin::symmetric(10.0, 10.0))
+                        .show(ui, |ui| {
+                            ui.set_width(ui.available_width());
+                            ui.vertical_centered(|ui| {
+                                ui.label(RichText::new(let_rank_title).size(12.5).strong().color(Color32::from_rgb(27, 94, 32)));
+                            });
+                            ui.add_space(8.0);
+                            let col_w = (ui.available_width() - 16.0) / 3.0;
+                            ui.horizontal(|ui| {
+                                egui::Frame::none().fill(Color32::WHITE).rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(4.0, 6.0)).show(ui, |ui| {
+                                    ui.set_width(col_w);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(RichText::new(format!("{} 棵", healthy_cnt)).size(17.0).strong().color(Color32::from_rgb(46, 125, 50)));
+                                        ui.label(RichText::new("🌲 健康成林").size(10.5).color(Color32::GRAY));
+                                    });
+                                });
+                                egui::Frame::none().fill(Color32::WHITE).rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(4.0, 6.0)).show(ui, |ui| {
+                                    ui.set_width(col_w);
+                                    ui.vertical_centered(|ui| {
+                                        let time_disp = if total_mins >= 60 { format!("{:.1} h", total_hours) } else { format!("{} m", total_mins) };
+                                        ui.label(RichText::new(time_disp).size(17.0).strong().color(Color32::from_rgb(21, 101, 192)));
+                                        ui.label(RichText::new("⏱️ 累计专注").size(10.5).color(Color32::GRAY));
+                                    });
+                                });
+                                egui::Frame::none().fill(Color32::WHITE).rounding(Rounding::same(8.0)).inner_margin(egui::Margin::symmetric(4.0, 6.0)).show(ui, |ui| {
+                                    ui.set_width(col_w);
+                                    ui.vertical_centered(|ui| {
+                                        ui.label(RichText::new(format!("{}%", success_rate)).size(17.0).strong().color(Color32::from_rgb(230, 81, 0)));
+                                        ui.label(RichText::new(format!("🎯 成活(枯{})", withered_cnt)).size(10.5).color(Color32::GRAY));
+                                    });
+                                });
+                            });
+
+                            // 绿意生态图景展示条
+                            if healthy_cnt > 0 {
+                                ui.add_space(8.0);
+                                let mut panorama = String::new();
+                                for i in 0..healthy_cnt.min(18) {
+                                    panorama.push_str(if i % 3 == 0 { "🌳" } else { "🌲" });
+                                }
+                                if healthy_cnt > 18 {
+                                    panorama.push_str(&format!(" +{}", healthy_cnt - 18));
+                                }
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new(panorama).size(14.0));
+                                });
+                            }
+                        });
+
+                    ui.add_space(8.0);
+                    ui.label(RichText::new("📜 专注种树时光轴").size(12.5).strong().color(Color32::from_rgb(55, 71, 79)));
+                    ui.add_space(4.0);
+
+                    egui::ScrollArea::vertical()
+                        .id_source("forest_stats_scroll")
+                        .max_height(345.0)
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            if records.is_empty() {
+                                ui.add_space(60.0);
+                                ui.vertical_centered(|ui| {
+                                    ui.label(RichText::new("🌱 森林还是空地，开启第一次专注种下绿树吧！").size(12.5).color(Color32::GRAY));
+                                });
+                            }
+                            for r in records.iter().rev() {
+                                let is_ok = r.status == "healthy";
+                                let (bg, stroke_col, icon, title_col, badge_txt) = if is_ok {
+                                    (
+                                        Color32::from_rgb(246, 252, 246),
+                                        Color32::from_rgb(200, 230, 201),
+                                        "🌲",
+                                        Color32::from_rgb(27, 94, 32),
+                                        format!("+{} 分钟 🌿", r.minutes),
+                                    )
+                                } else {
+                                    (
+                                        Color32::from_rgb(255, 248, 248),
+                                        Color32::from_rgb(255, 205, 210),
+                                        "🥀",
+                                        Color32::from_rgb(198, 40, 40),
+                                        "半途枯萎".to_string(),
+                                    )
+                                };
+                                let ts: String = r.timestamp.chars().take(16).collect();
+                                egui::Frame::none()
+                                    .fill(bg)
+                                    .rounding(Rounding::same(8.0))
+                                    .stroke(Stroke::new(1.0_f32, stroke_col))
+                                    .inner_margin(egui::Margin::symmetric(10.0, 7.0))
+                                    .show(ui, |ui| {
+                                        ui.set_width(ui.available_width());
+                                        ui.horizontal(|ui| {
+                                            ui.label(RichText::new(icon).size(20.0));
+                                            ui.vertical(|ui| {
+                                                ui.set_max_width(185.0);
+                                                ui.label(RichText::new(&r.task).size(12.5).strong().color(title_col));
+                                                ui.label(RichText::new(ts.replace('T', " ")).size(10.5).color(Color32::GRAY));
+                                            });
+                                            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                                                draw_badge(ui, &badge_txt, Color32::WHITE, title_col);
+                                            });
+                                        });
+                                    });
+                                ui.add_space(5.0);
+                            }
+                        });
                 });
-            if !open { self.show_forest_stats_modal = false; }
+            if !open {
+                self.show_forest_stats_modal = false;
+            }
         }
 
         // 5. 二次确认弹窗：删除任务 / 删除周期计划 / 放弃种树
         if let Some((uuid, title)) = self.confirm_delete_task.clone() {
             egui::Window::new("⚠️ 确认删除事项")
-                .collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label(format!("确定要删除事项「{}」吗？", title));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("取消").clicked() { self.confirm_delete_task = None; }
+                        if ui.button("取消").clicked() {
+                            self.confirm_delete_task = None;
+                        }
                         if ui.button(RichText::new("确认删除").color(Color32::RED)).clicked() {
                             if let Some(pos) = self.todos.iter().position(|x| x.uuid == uuid) {
                                 let t = self.todos.remove(pos);
@@ -1363,12 +1602,16 @@ impl EggDoneApp {
 
         if let Some((puuid, ptitle)) = self.confirm_delete_plan.clone() {
             egui::Window::new("⚠️ 确认删除周期计划")
-                .collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label(format!("确定要彻底删除周期计划「{}」吗？", ptitle));
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("取消").clicked() { self.confirm_delete_plan = None; }
+                        if ui.button("取消").clicked() {
+                            self.confirm_delete_plan = None;
+                        }
                         if ui.button(RichText::new("彻底删除").color(Color32::RED)).clicked() {
                             self.plans.retain(|p| p.plan_uuid != puuid);
                             self.todos.retain(|t| t.plan_uuid.as_deref() != Some(puuid.as_str()));
@@ -1381,12 +1624,16 @@ impl EggDoneApp {
 
         if self.confirm_giveup_focus {
             egui::Window::new("⚠️ 放弃专注")
-                .collapsible(false).resizable(false).anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
+                .collapsible(false)
+                .resizable(false)
+                .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     ui.label("现在放弃的话，这棵正在生长的小树将会枯萎 🥀\n确定要中断专注吗？");
                     ui.add_space(8.0);
                     ui.horizontal(|ui| {
-                        if ui.button("继续坚持 💪").clicked() { self.confirm_giveup_focus = false; }
+                        if ui.button("继续坚持 💪").clicked() {
+                            self.confirm_giveup_focus = false;
+                        }
                         if ui.button(RichText::new("忍痛放弃 🥀").color(Color32::RED)).clicked() {
                             self.record_forest("withered");
                             self.reset_forest_session();
@@ -1406,9 +1653,14 @@ impl eframe::App for EggDoneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.poll_tray_and_close_events(ctx);
         self.tick_timers(ctx);
+        
+        // 确保种树幼苗期也是绿色小苗 🌱，防止被旧定时器覆盖为 🌰
+        if self.is_focus_running && !self.is_resting && self.ball_icon == "🌰" {
+            self.ball_icon = "🌱".to_string();
+        }
         ctx.request_repaint_after(std::time::Duration::from_millis(200));
 
-        // 形态一：独立专注完成/休息大弹窗（可自由配置位置、尺寸、字号与提示语）
+        // 形态一：独立专注完成/休息大弹窗
         if self.is_rest_popup_mode {
             egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
                 let rect = ui.max_rect();
@@ -1416,7 +1668,7 @@ impl eframe::App for EggDoneApp {
                     rect.shrink(1.0),
                     Rounding::same(16.0),
                     Color32::from_rgb(241, 248, 233),
-                    Stroke::new(2.5, Color32::from_rgb(76, 175, 80)),
+                    Stroke::new(2.5_f32, Color32::from_rgb(76, 175, 80)),
                 );
                 ui.allocate_ui_at_rect(rect.shrink(18.0), |ui| {
                     ui.vertical_centered(|ui| {
@@ -1447,13 +1699,13 @@ impl eframe::App for EggDoneApp {
             return;
         }
 
-        // 形态二：64x64 360加速球风格桌面悬浮球（丝滑拖拽、悬停展开、右键托盘联动）
+        // 形态二：64x64 半透明呼吸质感桌面悬浮球
         if !self.is_expanded {
             egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
                 let (_, rect) = ui.allocate_space(Vec2::new(64.0, 64.0));
                 let resp = ui.interact(rect, egui::Id::new("floating_egg_ball"), Sense::click_and_drag());
 
-                // 悬停 260ms 自动丝滑展开面板（拖拽中不触发）
+                // 悬停 260ms 自动丝滑展开面板
                 if resp.hovered() && !self.is_dragging_ball && !ctx.input(|i| i.pointer.any_down()) {
                     if self.hover_enter_time.is_none() {
                         self.hover_enter_time = Some(Instant::now());
@@ -1465,7 +1717,7 @@ impl eframe::App for EggDoneApp {
                     self.hover_enter_time = None;
                 }
 
-                // 360加速球级物理屏幕坐标拖拽算法（彻底消除跳动，松手自动记忆坐标）
+                // 屏幕坐标级防抖拖拽
                 if resp.drag_started_by(egui::PointerButton::Primary) {
                     self.is_dragging_ball = true;
                     self.has_dragged = false;
@@ -1516,11 +1768,18 @@ impl eframe::App for EggDoneApp {
                     }
                 });
 
-                // 绘制立体双环悬浮球与专注倒计时环
+                // 绘制半透明通透双环悬浮球（悬停时亮度微增）
                 let painter = ui.painter();
                 let center = rect.center();
-                painter.circle(center, 29.0, Color32::from_rgb(46, 125, 50), Stroke::new(2.5, Color32::from_rgb(255, 213, 79)));
-                painter.circle_stroke(center, 25.5, Stroke::new(1.0, Color32::from_rgba_unmultiplied(255, 255, 255, 70)));
+                let bg_alpha = if resp.hovered() { 215 } else { 170 };
+                let ring_alpha = if resp.hovered() { 235 } else { 190 };
+                painter.circle(
+                    center,
+                    29.0,
+                    Color32::from_rgba_unmultiplied(46, 125, 50, bg_alpha),
+                    Stroke::new(2.2_f32, Color32::from_rgba_unmultiplied(255, 213, 79, ring_alpha)),
+                );
+                painter.circle_stroke(center, 25.0, Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(255, 255, 255, 95)));
 
                 if self.ball_time_str.is_empty() {
                     let pending_cnt = self.todos.len();
@@ -1550,11 +1809,11 @@ impl eframe::App for EggDoneApp {
         let panel_frame = egui::Frame::none()
             .fill(Color32::from_rgb(246, 249, 246))
             .rounding(Rounding::same(14.0))
-            .stroke(Stroke::new(1.5, Color32::from_rgb(200, 220, 200)))
+            .stroke(Stroke::new(1.5_f32, Color32::from_rgb(200, 220, 200)))
             .inner_margin(egui::Margin::same(12.0));
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-            // 1. 顶部森林绿渐变感标题栏（支持按住空白处拖动主面板）
+            // 1. 顶部森林绿标题栏
             let header_rect = ui.allocate_space(Vec2::new(ui.available_width(), 38.0)).1;
             ui.painter().rect_filled(header_rect, Rounding::same(9.0), Color32::from_rgb(46, 125, 50));
             let drag_resp = ui.interact(header_rect, egui::Id::new("header_drag_zone"), Sense::drag());
@@ -1594,20 +1853,6 @@ impl eframe::App for EggDoneApp {
                 });
             });
 
-            if let Some((msg, _)) = &self.toast {
-                ui.add_space(4.0);
-                egui::Frame::none()
-                    .fill(Color32::from_rgb(232, 245, 233))
-                    .rounding(Rounding::same(6.0))
-                    .inner_margin(egui::Margin::symmetric(8.0, 4.0))
-                    .show(ui, |ui| {
-                        ui.set_width(ui.available_width());
-                        ui.vertical_centered(|ui| {
-                            ui.label(RichText::new(msg).size(12.0).strong().color(Color32::from_rgb(27, 94, 32)));
-                        });
-                    });
-            }
-
             ui.add_space(8.0);
 
             // 2. 四大视图分段导航栏
@@ -1645,11 +1890,10 @@ impl eframe::App for EggDoneApp {
             // 3. 主体内容区域
             match self.current_tab {
                 ViewTab::All | ViewTab::Quadrants => {
-                    // 智能语义输入框
                     egui::Frame::none()
                         .fill(Color32::WHITE)
                         .rounding(Rounding::same(8.0))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(200, 230, 201)))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(200, 230, 201)))
                         .inner_margin(egui::Margin::symmetric(8.0, 5.0))
                         .show(ui, |ui| {
                             ui.horizontal(|ui| {
@@ -1660,15 +1904,24 @@ impl eframe::App for EggDoneApp {
                                     .desired_width(ui.available_width() - 36.0);
                                 let resp = ui.add(edit);
                                 if resp.changed() {
-                                    self.parsed_preview = QuickAddParser::parse(&self.input_text).map(|p| {
-                                    let mut tip = format!("✨ 标题: {}", p.title);
-                                        if p.priority == 1 { tip.push_str(" | ⭐重要"); }
-                                        if let Some(ref d) = p.due_date { tip.push_str(&format!(" | 📅{}", d)); }
-                                        if let Some(ref t) = p.due_time { tip.push_str(&format!(" 🕒{}", t)); }
-                                        if let Some(ref r) = p.repeat_rule { tip.push_str(&format!(" | 🔁{}", r)); }
-                                        tip
-                                    }).unwrap_or_default();
-                                    
+                                    self.parsed_preview = QuickAddParser::parse(&self.input_text)
+                                        .map(|p| {
+                                            let mut tip = format!("✨ 标题: {}", p.title);
+                                            if p.priority == 1 {
+                                                tip.push_str(" | ⭐重要");
+                                            }
+                                            if let Some(ref d) = p.due_date {
+                                                tip.push_str(&format!(" | 📅{}", d));
+                                            }
+                                            if let Some(ref t) = p.due_time {
+                                                tip.push_str(&format!(" 🕒{}", t));
+                                            }
+                                            if let Some(ref r) = p.repeat_rule {
+                                                tip.push_str(&format!(" | 🔁{}", r));
+                                            }
+                                            tip
+                                        })
+                                        .unwrap_or_default();
                                 }
                                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                     self.commit_new_task();
@@ -1716,7 +1969,7 @@ impl eframe::App for EggDoneApp {
                             }
                         });
                     } else {
-                        // 四象限视图
+                        // 四象限视图（显示全部具体事项，横向不越界）
                         let avail_h = (ui.available_height() - 8.0).max(200.0);
                         let half_h = (avail_h - 8.0) * 0.5;
                         let half_w = (ui.available_width() - 8.0) * 0.5;
@@ -1764,7 +2017,7 @@ impl eframe::App for EggDoneApp {
                             egui::Frame::none()
                                 .fill(Color32::WHITE)
                                 .rounding(Rounding::same(10.0))
-                                .stroke(Stroke::new(1.0, Color32::from_rgb(215, 230, 215)))
+                                .stroke(Stroke::new(1.0_f32, Color32::from_rgb(215, 230, 215)))
                                 .inner_margin(egui::Margin::symmetric(10.0, 8.0))
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
@@ -1801,7 +2054,7 @@ impl eframe::App for EggDoneApp {
                     egui::Frame::none()
                         .fill(Color32::WHITE)
                         .rounding(Rounding::same(12.0))
-                        .stroke(Stroke::new(1.0, Color32::from_rgb(200, 230, 201)))
+                        .stroke(Stroke::new(1.0_f32, Color32::from_rgb(200, 230, 201)))
                         .inner_margin(egui::Margin::same(14.0))
                         .show(ui, |ui| {
                             ui.set_width(ui.available_width());
@@ -1814,15 +2067,26 @@ impl eframe::App for EggDoneApp {
                                     }
                                 });
 
-                                ui.add_space(18.0);
-                                let tree_emoji = if self.is_focus_running { self.ball_icon.as_str() } else { "🌲" };
-                                ui.label(RichText::new(tree_emoji).size(66.0));
+                                ui.add_space(16.0);
+                                // 始终保持绿色的树/幼苗视觉呈现，带淡绿生态底盘衬托
+                                let tree_emoji = if self.is_focus_running {
+                                    if self.ball_icon == "🌰" { "🌱" } else { self.ball_icon.as_str() }
+                                } else {
+                                    "🌲"
+                                };
+                                egui::Frame::none()
+                                    .fill(Color32::from_rgb(232, 245, 233))
+                                    .rounding(Rounding::same(50.0))
+                                    .inner_margin(egui::Margin::symmetric(22.0, 12.0))
+                                    .show(ui, |ui| {
+                                        ui.label(RichText::new(tree_emoji).size(62.0).color(Color32::from_rgb(46, 125, 50)));
+                                    });
                                 ui.add_space(8.0);
 
                                 let m = self.remaining_secs / 60;
                                 let s = self.remaining_secs % 60;
-                                ui.label(RichText::new(format!("{:02}:{:02}", m, s)).size(42.0).strong().color(Color32::from_rgb(38, 50, 56)));
-                                ui.add_space(12.0);
+                                ui.label(RichText::new(format!("{:02}:{:02}", m, s)).size(42.0).strong().color(Color32::from_rgb(27, 94, 32)));
+                                ui.add_space(10.0);
 
                                 if !self.is_focus_running {
                                     ui.horizontal(|ui| {
@@ -1833,16 +2097,16 @@ impl eframe::App for EggDoneApp {
                                             safe_json_dump("config.json", &self.config);
                                         }
                                     });
-                                    ui.add_space(14.0);
+                                    ui.add_space(12.0);
                                     if ui.add_sized([200.0, 40.0], egui::Button::new(RichText::new("🌱 开始种树专注").size(15.0).strong().color(Color32::WHITE)).fill(Color32::from_rgb(67, 160, 71))).clicked() {
                                         self.is_resting = false;
                                         self.remaining_secs = self.focus_minutes * 60;
                                         self.is_focus_running = true;
                                         self.last_sec_tick = Instant::now();
-                                        self.ball_icon = "🌰".to_string();
+                                        self.ball_icon = "🌱".to_string();
                                     }
                                 } else {
-                                    ui.add_space(14.0);
+                                    ui.add_space(12.0);
                                     if self.is_resting {
                                         if ui.add_sized([180.0, 38.0], egui::Button::new(RichText::new("⏭️ 结束休息").size(14.0).color(Color32::WHITE)).fill(Color32::from_rgb(2, 136, 209))).clicked() {
                                             self.reset_forest_session();
@@ -1852,11 +2116,11 @@ impl eframe::App for EggDoneApp {
                                     }
                                 }
 
-                                ui.add_space(18.0);
+                                ui.add_space(16.0);
                                 ui.separator();
                                 ui.add_space(6.0);
                                 ui.horizontal(|ui| {
-                                    if ui.button("📊 森林统计记录").clicked() {
+                                    if ui.button(RichText::new("🏆 森林统计档案").strong().color(Color32::from_rgb(46, 125, 50))).clicked() {
                                         self.show_forest_stats_modal = true;
                                     }
                                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1872,6 +2136,24 @@ impl eframe::App for EggDoneApp {
         });
 
         self.render_modals(ctx);
+
+        // 底部独立悬浮级 Toast：采用 egui::Area 脱离文档流，永不挤压界面，绝对置顶
+        if let Some((msg, _)) = &self.toast {
+            egui::Area::new(egui::Id::new("bottom_floating_toast"))
+                .order(egui::Order::Foreground)
+                .interactable(false)
+                .anchor(egui::Align2::CENTER_BOTTOM, Vec2::new(0.0, -20.0))
+                .show(ctx, |ui| {
+                    egui::Frame::none()
+                        .fill(Color32::from_rgba_unmultiplied(38, 105, 42, 238))
+                        .rounding(Rounding::same(20.0))
+                        .stroke(Stroke::new(1.2_f32, Color32::from_rgb(165, 214, 167)))
+                        .inner_margin(egui::Margin::symmetric(16.0, 8.0))
+                        .show(ui, |ui| {
+                            ui.label(RichText::new(msg).size(12.5).strong().color(Color32::WHITE));
+                        });
+                });
+        }
     }
 }
 
@@ -1895,7 +2177,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         "/System/Library/Fonts/PingFang.ttc",
     ];
     for path in font_candidates {
-        if let Ok(bytes) = fs::read(path) {
+        if let Ok(bytes) = std::fs::read(path) {
             fonts.font_data.insert("cjk".to_owned(), FontData::from_owned(bytes));
             fonts.families.entry(FontFamily::Proportional).or_default().insert(0, "cjk".to_owned());
             fonts.families.entry(FontFamily::Monospace).or_default().push("cjk".to_owned());
@@ -1907,7 +2189,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
         "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     ];
     for path in emoji_candidates {
-        if let Ok(bytes) = fs::read(path) {
+        if let Ok(bytes) = std::fs::read(path) {
             fonts.font_data.insert("emoji".to_owned(), FontData::from_owned(bytes));
             fonts.families.entry(FontFamily::Proportional).or_default().push("emoji".to_owned());
             break;
@@ -1918,7 +2200,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 
 fn main() -> eframe::Result<()> {
     // 单实例锁：防止重复双击打开多个悬浮球
-    let instance = SingleInstance::new("EggDone_Desktop_SingleInstance_Lock_v2").unwrap();
+    let instance = single_instance::SingleInstance::new("EggDone_Desktop_SingleInstance_Lock_v2").unwrap();
     if !instance.is_single() {
         return Ok(());
     }
@@ -1932,7 +2214,7 @@ fn main() -> eframe::Result<()> {
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()
-        .with_taskbar(false) // 隐藏底部任务栏大图标，常驻右下角系统托盘与桌面悬浮球
+        .with_taskbar(false)
         .with_resizable(false);
 
     let options = eframe::NativeOptions {
@@ -1946,3 +2228,4 @@ fn main() -> eframe::Result<()> {
         Box::new(move |cc| Box::new(EggDoneApp::new(cc, init_pos))),
     )
 }
+    
