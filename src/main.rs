@@ -1032,7 +1032,7 @@ impl EggDoneApp {
             .collect();
 
         let task_count = tasks.len();
-        let count_text = if task_count > 0 { format!("({})", task_count) } else { "(暂无)".to_string() };
+        //let count_text = if task_count > 0 { format!("({})", task_count) } else { "(暂无)".to_string() };
 
         egui::Frame::none()
             .fill(body_bg)
@@ -1046,7 +1046,7 @@ impl EggDoneApp {
                 ui.vertical_centered(|ui| {
                     ui.add_space(4.0);
                     ui.label(RichText::new(title).size(11.5).strong().color(Color32::from_rgb(38, 50, 56)));
-                    ui.label(RichText::new(count_text).size(10.0).color(Color32::from_rgb(96, 125, 139)));
+                    //ui.label(RichText::new(count_text).size(10.0).color(Color32::from_rgb(96, 125, 139)));
                     ui.add_space(4.0);
                 });
 
@@ -1985,7 +1985,7 @@ impl eframe::App for EggDoneApp {
                         // 【修复】四象限精准布局，从总宽高中扣除间距避免溢出
                         let total_w = ui.available_width();
                         let total_h = ui.available_height();
-                        let gap = 6.0;
+                        let gap = 4.0;
                         let half_w = (total_w - gap) * 0.5;
                         let half_h = (total_h - gap) * 0.5;
 
