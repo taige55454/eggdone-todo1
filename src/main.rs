@@ -356,7 +356,9 @@ impl EggDoneApp {
 
         // 【修复】直接保存当前悬浮球的真实位置，不要重新计算
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
-            self.ball_pos = rect.min;
+    if rect.width() < 100.0 {
+        self.ball_pos = rect.min;
+    }
         }
 
         let monitor = ctx.input(|i| i.viewport().monitor_size).unwrap_or(Vec2::new(1920.0, 1080.0));
