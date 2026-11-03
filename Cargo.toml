@@ -1,10 +1,11 @@
 [package]
 name = "eggdone_todo"
-version = "1.0.0"
+version = "1.0.1"
 edition = "2021"
 
 [dependencies]
-eframe = "0.27.2"
+# 显式开启 wgpu (DirectX12/Metal) 渲染器，彻底解决 Parallels 虚拟机与透明窗口驱动黑屏/闪退问题
+eframe = { version = "0.27.2", default-features = false, features = ["wgpu", "default_fonts"] }
 egui = "0.27.2"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
@@ -21,5 +22,4 @@ winreg = "0.52"
 opt-level = "z"
 lto = true
 codegen-units = 1
-panic = "abort"
 strip = true
