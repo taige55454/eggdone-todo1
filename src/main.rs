@@ -278,7 +278,6 @@ impl QuickAddParser {
 
         let today = Local::now().date_naive();
 
-        // 相对日期识别
         static RE_TOMORROW: OnceLock<Regex> = OnceLock::new();
         static RE_TODAY: OnceLock<Regex> = OnceLock::new();
         let re_tom = RE_TOMORROW.get_or_init(|| Regex::new(r"(?i)(明天|tomorrow\b)").unwrap());
@@ -304,7 +303,6 @@ impl QuickAddParser {
             text = text.trim().to_string();
         }
 
-        // 周期规则识别
         static RE_DAILY: OnceLock<Regex> = OnceLock::new();
         static RE_WEEKDAYS: OnceLock<Regex> = OnceLock::new();
         static RE_WEEKLY: OnceLock<Regex> = OnceLock::new();
@@ -407,7 +405,6 @@ impl QuickAddParser {
             }
         }
 
-        // 时间识别
         static RE_TIME: OnceLock<Regex> = OnceLock::new();
         static RE_CH_TIME: OnceLock<Regex> = OnceLock::new();
         let re_time = RE_TIME.get_or_init(|| Regex::new(r"\b([0-2]?\d)[:：]([0-5]\d)\b").unwrap());
@@ -543,7 +540,7 @@ struct EditDialogState {
     has_time: bool,
     time_hour: u32,
     time_min: u32,
-    repeat_rule: String, // "none", "daily", "weekdays", "weekly", "monthly"
+    repeat_rule: String,
     weekly_checked: [bool; 7],
     monthly_str: String,
 }
@@ -563,36 +560,32 @@ struct EggDoneApp {
     plans: Vec<Plan>,
     history: Vec<HistoryRecord>,
 
-    // 视图与窗口控制
     is_expanded: bool,
     current_view: ViewTab,
     input_text: String,
     parsed_preview: Vec<String>,
     autostart: bool,
 
-    // 交互防抖与二次确认
     pending_confirm: HashMap<String, Instant>,
     last_hover_leave: Option<Instant>,
     last_reminder_check: Instant,
     last_sync_date: NaiveDate,
 
-    // 模态框控制
     edit_modal: Option<EditDialogState>,
-    delete_confirm_modal: Option<(bool, String, String)>, // (is_plan, uuid, title)
+    delete_confirm_modal: Option<(bool, String, String)>,
     giveup_confirm_modal: bool,
     show_history_modal: bool,
     show_forest_stats_modal: bool,
     show_focus_success_modal: bool,
     toast: Option<(String, Instant)>,
 
-    // 专注森林状态
     focus_duration_secs: u32,
     rest_duration_secs: u32,
     remaining_secs: u32,
     is_focus_running: bool,
     is_resting: bool,
     focus_task: Option<TodoTask>,
-    last_Timer_tick: Instant,
+    last_timer_tick: Instant,
     withered_anim_until: Option<Instant>,
 }
 
@@ -605,7 +598,6 @@ impl EggDoneApp {
         let mut plans: Vec<Plan> = safe_json_load("plans.json");
         let history: Vec<HistoryRecord> = safe_json_load("history.json");
 
-        // 数据补全与迁移校验
         let mut needs_save = false;
         let today_s = today_str();
         for task in &mut todos {
@@ -664,7 +656,7 @@ impl EggDoneApp {
             is_focus_running: false,
             is_resting: false,
             focus_task: None,
-            last_Timer_tick: Instant::now(),
+            last_timer_tick: Instant::now(),
             withered_anim_until: None,
         };
 
@@ -693,12 +685,10 @@ impl EggDoneApp {
         });
     }
 
-    // 修复原版 Bug：支持回溯过去 7 天漏生成的周期实例
     fn sync_repeat_plans(&mut self) -> bool {
         let today = Local::now().date_naive();
         self.last_sync_date = today;
 
-        // 评估过去 7 天到今天的所有日期，防止关机几天后漏掉周期任务
         let eval_dates: Vec<NaiveDate> = (0..=7).rev().map(|i| today - Duration::days(i)).collect();
 
         let mut existing_cycles = HashSet::new();
@@ -932,7 +922,7 @@ impl EggDoneApp {
         self.is_resting = true;
         self.remaining_secs = self.rest_duration_secs;
         self.is_focus_running = true;
-        self.last_Timer_tick = Instant::now();
+        self.last_timer_tick = Instant::now();
     }
 
     fn copy_handover(&mut self, ctx: &egui::Context) {
@@ -1103,11 +1093,9 @@ impl EggDoneApp {
         }
     }
 
-    // 后台定时与状态演进引擎
     fn background_tick(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
 
-        // 1. 清理过期的二次确认状态
         let expired_uuids: Vec<String> = self
             .pending_confirm
             .iter()
@@ -1118,23 +1106,20 @@ impl EggDoneApp {
             self.pending_confirm.remove(&k);
         }
 
-        // 2. 清理过期 Toast
         if let Some((_, exp)) = self.toast {
             if now >= exp {
                 self.toast = None;
             }
         }
 
-        // 3. 枯萎动画恢复
         if let Some(until) = self.withered_anim_until {
             if now >= until {
                 self.reset_forest_session();
             }
         }
 
-        // 4. 专注森林倒计时演进
-        if self.is_focus_running && now.duration_since(self.last_Timer_tick).as_secs() >= 1 {
-            self.last_Timer_tick = now;
+        if self.is_focus_running && now.duration_since(self.last_timer_tick).as_secs() >= 1 {
+            self.last_timer_tick = now;
             if self.remaining_secs > 0 {
                 self.remaining_secs -= 1;
             }
@@ -1156,7 +1141,6 @@ impl EggDoneApp {
             }
         }
 
-        // 5. 每 10 秒检查一次提醒与跨天同步 (比原版 30 秒更精准)
         if now.duration_since(self.last_reminder_check).as_secs() >= 10 {
             self.last_reminder_check = now;
             let cur_date = Local::now().date_naive();
@@ -1187,24 +1171,20 @@ impl EggDoneApp {
             }
         }
 
-        // 6. 自动折叠检测
         let pointer_in_window = ctx.input(|i| i.pointer.has_pointer());
         if self.is_expanded && !self.is_any_modal_open() {
             if pointer_in_window || ctx.memory(|m| m.focused().is_some()) {
                 self.last_hover_leave = None;
-            } else {
-                if self.last_hover_leave.is_none() {
-                    self.last_hover_leave = Some(now);
-                } else if now.duration_since(self.last_hover_leave.unwrap()).as_millis() > 450 {
-                    self.collapse_window(ctx);
-                    self.last_hover_leave = None;
-                }
+            } else if self.last_hover_leave.is_none() {
+                self.last_hover_leave = Some(now);
+            } else if now.duration_since(self.last_hover_leave.unwrap()).as_millis() > 450 {
+                self.collapse_window(ctx);
+                self.last_hover_leave = None;
             }
         } else if !self.is_expanded && pointer_in_window {
             self.expand_window(ctx);
         }
 
-        // 智能按需重绘调度：确保平时 0% CPU 占用，倒计时或动画时平滑刷新
         if self.is_focus_running || !self.pending_confirm.is_empty() || self.toast.is_some() || self.withered_anim_until.is_some() || self.last_hover_leave.is_some() {
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         } else {
@@ -1234,7 +1214,7 @@ impl EggDoneApp {
 // ================= UI 渲染实现 =================
 impl eframe::App for EggDoneApp {
     fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
-        [0.0, 0.0, 0.0, 0.0] // 完全透明背景，支持圆角悬浮球与圆角面板
+        [0.0, 0.0, 0.0, 0.0]
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
@@ -1249,7 +1229,6 @@ impl eframe::App for EggDoneApp {
 }
 
 impl EggDoneApp {
-    // 渲染收缩态悬浮球
     fn render_collapsed_ball(&mut self, ctx: &egui::Context) {
         egui::CentralPanel::default()
             .frame(egui::Frame::none())
@@ -1257,7 +1236,6 @@ impl EggDoneApp {
                 let rect = Rect::from_min_size(Pos2::ZERO, Vec2::new(60.0, 60.0));
                 let resp = ui.allocate_rect(rect, Sense::click_and_drag());
 
-                // 允许按住拖动悬浮球位置
                 if resp.dragged() {
                     ctx.send_viewport_cmd(ViewportCommand::StartDrag);
                 }
@@ -1270,7 +1248,7 @@ impl EggDoneApp {
                     rect.center(),
                     28.0,
                     Color32::from_rgba_unmultiplied(30, 30, 30, 195),
-                    Stroke::new(2.0, Color32::from_rgba_unmultiplied(255, 215, 0, 210)),
+                    Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 215, 0, 210)),
                 );
 
                 let (icon, time_str) = if self.withered_anim_until.is_some() {
@@ -1293,7 +1271,7 @@ impl EggDoneApp {
                     );
                 } else {
                     painter.text(
-                         rect.center() - Vec2::new(0.0, 9.0),
+                        rect.center() - Vec2::new(0.0, 9.0),
                         egui::Align2::CENTER_CENTER,
                         icon,
                         egui::FontId::proportional(17.0),
@@ -1310,16 +1288,14 @@ impl EggDoneApp {
             });
     }
 
-    // 渲染展开态主面板
     fn render_expanded_panel(&mut self, ctx: &egui::Context) {
         let panel_frame = egui::Frame::none()
             .fill(Color32::from_rgba_unmultiplied(250, 250, 252, 252))
             .rounding(Rounding::same(14.0))
-            .stroke(Stroke::new(1.0, Color32::from_rgba_unmultiplied(180, 180, 180, 200)))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(180, 180, 180, 200)))
             .inner_margin(egui::Margin::symmetric(12.0, 14.0));
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
-            // 1. 顶部标题栏 (支持按住标题栏拖拽窗口)
             ui.horizontal(|ui| {
                 let title_resp = ui.add(
                     egui::Label::new(RichText::new(&self.config.title_prefix).size(16.0).strong().color(Color32::from_rgb(34, 34, 34)))
@@ -1330,7 +1306,6 @@ impl EggDoneApp {
                 }
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    // 系统设置菜单 (替代容易引发跨平台兼容问题的托盘菜单)
                     ui.menu_button(RichText::new("⚙️").size(14.0), |ui| {
                         ui.set_min_width(130.0);
                         if ui.checkbox(&mut self.autostart, "⚡ 开机自动启动").changed() {
@@ -1372,7 +1347,6 @@ impl EggDoneApp {
 
             ui.add_space(6.0);
 
-            // 2. 导航切换栏
             ui.columns(4, |cols| {
                 let tabs = [
                     (ViewTab::All, "📋 当前"),
@@ -1396,7 +1370,6 @@ impl EggDoneApp {
 
             ui.add_space(6.0);
 
-            // 3. 主体内容区 (预留底部快速输入框高度)
             let content_height = (ui.available_height() - 56.0).max(100.0);
             ui.allocate_ui(Vec2::new(ui.available_width(), content_height), |ui| {
                 match self.current_view {
@@ -1407,7 +1380,6 @@ impl EggDoneApp {
                 }
             });
 
-            // 4. 底部自然语言快速添加栏
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Min), |ui| {
                 let edit_resp = ui.add_sized(
                     Vec2::new(ui.available_width(), 30.0),
@@ -1438,12 +1410,10 @@ impl EggDoneApp {
             });
         });
 
-        // 5. 渲染所有顶层模态弹窗与 Toast
         self.render_modals(ctx);
         self.render_toast(ctx);
     }
 
-    // 视图 1：当前全部任务列表
     fn render_view_all(&mut self, ui: &mut egui::Ui) {
         let today_s = today_str();
         let now_time_s = Local::now().format("%H:%M").to_string();
@@ -1496,20 +1466,18 @@ impl EggDoneApp {
                 let frame = egui::Frame::none()
                     .fill(card_bg)
                     .rounding(Rounding::same(6.0))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(238, 238, 238)))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(238, 238, 238)))
                     .inner_margin(egui::Margin::symmetric(8.0, 6.0));
 
                 let resp = frame.show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
-                        // 左侧状态图标
                         if is_pending {
                             ui.label(RichText::new("✔️").size(15.0).color(Color32::from_rgb(21, 101, 192)).strong());
                         } else {
                             ui.label(RichText::new("◯").size(15.0).color(Color32::GRAY));
                         }
 
-                        // 中间标题文字
                         ui.vertical(|ui| {
                             ui.set_max_width(185.0);
                             if is_pending {
@@ -1519,10 +1487,8 @@ impl EggDoneApp {
                             }
                         });
 
-                        // 右侧双行徽章
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             ui.vertical(|ui| {
-                                // 第一行：优先级 + 日期
                                 ui.horizontal(|ui| {
                                     if let Some(ref d) = task.due_date {
                                         let short_d = if d.len() >= 5 { &d[5..] } else { d.as_str() };
@@ -1548,7 +1514,6 @@ impl EggDoneApp {
                                     }
                                 });
 
-                                // 第二行：周期 + 时间
                                 ui.horizontal(|ui| {
                                     if !rule_disp.is_empty() {
                                         draw_badge(ui, &format!("🔁{}", rule_disp), Color32::from_rgb(232, 245, 233), Color32::from_rgb(46, 125, 50));
@@ -1571,7 +1536,6 @@ impl EggDoneApp {
                     }
                 }
 
-                // 右键上下文菜单
                 interact.context_menu(|ui| {
                     self.render_task_context_menu(ui, &task);
                 });
@@ -1581,7 +1545,6 @@ impl EggDoneApp {
         });
     }
 
-    // 视图 2：四象限法则视图
     fn render_view_quadrants(&mut self, ui: &mut egui::Ui) {
         let today_s = today_str();
         let mut q_tasks: [Vec<TodoTask>; 4] = Default::default();
@@ -1610,7 +1573,6 @@ impl EggDoneApp {
                     let list = &q_tasks[idx];
 
                     cols[col].allocate_ui(Vec2::new(cols[col].available_width(), half_h), |ui| {
-                        // 象限标题头
                         egui::Frame::none()
                             .fill(header_bg)
                             .rounding(Rounding::same(4.0))
@@ -1622,7 +1584,6 @@ impl EggDoneApp {
 
                         ui.add_space(2.0);
 
-                        // 象限列表区
                         egui::Frame::none()
                             .fill(body_bg)
                             .rounding(Rounding::same(6.0))
@@ -1666,11 +1627,10 @@ impl EggDoneApp {
         }
     }
 
-    // 视图 3：周期计划蓝图管理
     fn render_view_plans(&mut self, ui: &mut egui::Ui) {
         let btn = egui::Button::new(RichText::new("➕ 添加周期计划").size(13.0).strong().color(Color32::from_rgb(46, 125, 50)))
             .fill(Color32::from_rgb(232, 245, 233))
-            .stroke(Stroke::new(1.0, Color32::from_rgb(200, 230, 201)))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgb(200, 230, 201)))
             .rounding(Rounding::same(6.0))
             .min_size(Vec2::new(ui.available_width(), 32.0));
 
@@ -1694,7 +1654,7 @@ impl EggDoneApp {
                 let frame = egui::Frame::none()
                     .fill(Color32::WHITE)
                     .rounding(Rounding::same(6.0))
-                    .stroke(Stroke::new(1.0, Color32::from_rgb(238, 238, 238)))
+                    .stroke(Stroke::new(1.0_f32, Color32::from_rgb(238, 238, 238)))
                     .inner_margin(egui::Margin::symmetric(8.0, 8.0));
 
                 let resp = frame.show(ui, |ui| {
@@ -1730,7 +1690,6 @@ impl EggDoneApp {
         });
     }
 
-    // 视图 4：番茄专注森林
     fn render_view_forest(&mut self, ui: &mut egui::Ui) {
         ui.horizontal(|ui| {
             let task_title = self.focus_task.as_ref().map(|t| {
@@ -1756,7 +1715,6 @@ impl EggDoneApp {
 
         ui.add_space(12.0);
 
-        // 树木成长大图展示框
         egui::Frame::none()
             .fill(Color32::from_rgba_unmultiplied(232, 245, 233, 220))
             .rounding(Rounding::same(16.0))
@@ -1770,7 +1728,6 @@ impl EggDoneApp {
 
         ui.add_space(12.0);
 
-        // 倒计时数字
         let m = self.remaining_secs / 60;
         let s = self.remaining_secs % 60;
         ui.vertical_centered(|ui| {
@@ -1779,7 +1736,6 @@ impl EggDoneApp {
 
         ui.add_space(8.0);
 
-        // 进度条
         let total = if self.is_resting { self.rest_duration_secs } else { self.focus_duration_secs }.max(1);
         let elapsed = total.saturating_sub(self.remaining_secs);
         let progress = (elapsed as f32) / (total as f32);
@@ -1787,7 +1743,6 @@ impl EggDoneApp {
 
         ui.add_space(16.0);
 
-        // 控制按钮
         ui.columns(2, |cols| {
             let toggle_txt = if self.is_focus_running {
                 "⏸️ 暂停"
@@ -1804,7 +1759,7 @@ impl EggDoneApp {
 
             if cols[0].add(btn_toggle).on_hover_cursor(CursorIcon::PointingHand).clicked() {
                 self.is_focus_running = !self.is_focus_running;
-                self.last_Timer_tick = Instant::now();
+                self.last_timer_tick = Instant::now();
             }
 
             let can_giveup = self.is_focus_running || self.is_resting || self.remaining_secs != self.focus_duration_secs;
@@ -1828,7 +1783,6 @@ impl EggDoneApp {
         });
     }
 
-    // 任务右键菜单
     fn render_task_context_menu(&mut self, ui: &mut egui::Ui, task: &TodoTask) {
         if ui.button("🌲 对此事项开启专注").clicked() {
             ui.close_menu();
@@ -1868,9 +1822,7 @@ impl EggDoneApp {
         }
     }
 
-    // 渲染所有模态对话框
     fn render_modals(&mut self, ctx: &egui::Context) {
-        // 1. 专注完成沉浸式大弹窗
         if self.show_focus_success_modal {
             egui::Window::new("focus_success")
                 .title_bar(false)
@@ -1882,7 +1834,7 @@ impl EggDoneApp {
                     egui::Frame::none()
                         .fill(Color32::from_rgb(241, 248, 233))
                         .rounding(Rounding::same(16.0))
-                        .stroke(Stroke::new(2.0, Color32::from_rgb(129, 199, 132)))
+                        .stroke(Stroke::new(2.0_f32, Color32::from_rgb(129, 199, 132)))
                         .inner_margin(egui::Margin::same(16.0)),
                 )
                 .show(ctx, |ui| {
@@ -1905,7 +1857,6 @@ impl EggDoneApp {
                 });
         }
 
-        // 2. 放弃专注确认弹窗
         if self.giveup_confirm_modal {
             egui::Window::new("⚠️ 放弃专注？")
                 .collapsible(false)
@@ -1928,7 +1879,6 @@ impl EggDoneApp {
                 });
         }
 
-        // 3. 删除确认弹窗
         if let Some((is_plan, uuid, title)) = self.delete_confirm_modal.clone() {
             egui::Window::new("🗑️ 确认删除")
                 .collapsible(false)
@@ -1959,7 +1909,6 @@ impl EggDoneApp {
                 });
         }
 
-        // 4. 编辑事项/计划对话框
         if let Some(mut state) = self.edit_modal.clone() {
             let mut close_modal = false;
             let mut save_modal = false;
@@ -1967,7 +1916,7 @@ impl EggDoneApp {
             egui::Window::new(if state.is_plan { "✏️ 编辑周期计划" } else { "✏️ 编辑事项" })
                 .collapsible(false)
                 .resizable(false)
-                .fixed_width(310.0)
+                .default_width(310.0)
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
                     egui::Grid::new("edit_grid").num_columns(2).spacing([8.0, 8.0]).show(ui, |ui| {
@@ -2070,7 +2019,6 @@ impl EggDoneApp {
             }
         }
 
-        // 5. 历史复盘中心弹窗
         if self.show_history_modal {
             let mut open = true;
             egui::Window::new("📚 历史复盘中心")
@@ -2115,7 +2063,6 @@ impl EggDoneApp {
             if !open { self.show_history_modal = false; }
         }
 
-        // 6. 专注森林统计弹窗
         if self.show_forest_stats_modal {
             let mut open = true;
             let records: Vec<ForestRecord> = safe_json_load("forest.json");
@@ -2234,7 +2181,6 @@ impl EggDoneApp {
         self.save_all_data();
     }
 
-    // 渲染半透明渐隐 Toast
     fn render_toast(&self, ctx: &egui::Context) {
         if let Some((ref msg, _)) = self.toast {
             egui::Area::new(egui::Id::new("toast_area"))
@@ -2254,7 +2200,6 @@ impl EggDoneApp {
     }
 }
 
-// 辅助绘制圆角小标签
 fn draw_badge(ui: &mut egui::Ui, text: &str, bg: Color32, fg: Color32) {
     egui::Frame::none()
         .fill(bg)
@@ -2265,7 +2210,6 @@ fn draw_badge(ui: &mut egui::Ui, text: &str, bg: Color32, fg: Color32) {
         });
 }
 
-// 跨平台加载系统中文字体与 Emoji 字体，确保不乱码、无方块
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
@@ -2305,9 +2249,7 @@ fn setup_custom_fonts(ctx: &egui::Context) {
     ctx.set_fonts(fonts);
 }
 
-// ================= 程序主入口 =================
 fn main() -> eframe::Result<()> {
-    // 单实例互斥锁，防止多开导致 JSON 读写冲突
     let instance = SingleInstance::new("EggDone_Rust_Instance_Mutex").unwrap();
     if !instance.is_single() {
         let _ = Notification::new()
@@ -2323,7 +2265,7 @@ fn main() -> eframe::Result<()> {
         .with_always_on_top()
         .with_taskbar(false)
         .with_inner_size([64.0, 64.0])
-        .with_position([1200.0, 60.0]); // 首次进入 update 时会自动吸附到当前显示器右侧
+        .with_position([1200.0, 60.0]);
 
     let options = eframe::NativeOptions {
         viewport,
