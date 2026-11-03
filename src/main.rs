@@ -60,6 +60,7 @@ struct EggDoneApp {
     pending_confirm: HashMap<String, Instant>,
     toast: Option<(String, Instant)>,
 
+    // 专注时钟相关
     focus_minutes: u32,
     remaining_secs: u32,
     is_focus_running: bool,
@@ -68,6 +69,11 @@ struct EggDoneApp {
     last_sec_tick: Instant,
     ball_icon: String,
     ball_time_str: String,
+
+    // UI时钟缓存：彻底消灭渲染循环的内存碎片
+    cached_today_str: String,
+    cached_now_hm: String,
+    last_clock_update: Instant,
 
     edit_modal: Option<EditDialogState>,
     show_history_modal: bool,
@@ -166,6 +172,8 @@ impl EggDoneApp {
             }
         }
 
+        let local_now = Local::now();
+
         let mut app = Self {
             config,
             todos,
@@ -187,6 +195,11 @@ impl EggDoneApp {
             last_sec_tick: Instant::now(),
             ball_icon: "🥚".to_string(),
             ball_time_str: String::new(),
+          
+            cached_today_str: local_now.format("%Y-%m-%d").to_string(),
+            cached_now_hm: local_now.format("%H:%M").to_string(),
+            last_clock_update: Instant::now(),
+
             edit_modal: None,
             show_history_modal: false,
             show_forest_stats_modal: false,
@@ -194,7 +207,7 @@ impl EggDoneApp {
             confirm_delete_task: None,
             confirm_delete_plan: None,
             confirm_giveup_focus: false,
-            last_sync_date: Local::now().date_naive(),
+            last_sync_date: local_now.date_naive(),
             last_reminder_check: Instant::now(),
             mouse_leave_time: None,
             hover_enter_time: None,
@@ -343,12 +356,10 @@ impl EggDoneApp {
         self.mouse_leave_time = None;
         self.hover_enter_time = None;
 
-        // 优化点：展开时读取最新坐标（兼容 StartDrag 后的原生移动）
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
             self.ball_pos = rect.min;
         }
 
-        // 优化点：动态读取屏幕高度，防止弹窗下方被裁切
         let monitor = ctx.input(|i| i.viewport().monitor_size).unwrap_or(Vec2::new(1920.0, 1080.0));
         let max_y = (monitor.y - 650.0).max(10.0);
 
@@ -372,7 +383,6 @@ impl EggDoneApp {
         self.mouse_leave_time = None;
         self.hover_enter_time = None;
 
-        // 如果主面板被拖动过，恢复悬浮球时更新坐标并持久化
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
             self.panel_pos = rect.min;
             self.ball_pos.x = if self.panel_pos.x > 10.0 { self.panel_pos.x + 360.0 - 64.0 } else { self.panel_pos.x };
@@ -520,7 +530,6 @@ impl EggDoneApp {
             let task = self.todos.remove(idx);
             self.pending_confirm.remove(uuid);
 
-            // 优化点：如果是专注目标被完成，自动解绑
             if !self.is_focus_running {
                 if let Some((ref focus_uuid, _)) = self.current_focus_task {
                     if focus_uuid == uuid {
@@ -595,6 +604,15 @@ impl EggDoneApp {
 
     fn tick_timers(&mut self, ctx: &egui::Context) {
         let now = Instant::now();
+      
+        // 【优化】每10秒更新一次时钟缓存，彻底消除UI渲染循环中的字符串分配(GC垃圾)
+        if now.duration_since(self.last_clock_update).as_secs() >= 10 {
+            self.last_clock_update = now;
+            let local_now = Local::now();
+            self.cached_today_str = local_now.format("%Y-%m-%d").to_string();
+            self.cached_now_hm = local_now.format("%H:%M").to_string();
+        }
+
         self.pending_confirm.retain(|_, t| now.duration_since(*t).as_millis() < 2500);
         if let Some((_, t)) = &self.toast {
             if now.duration_since(*t).as_millis() > 2200 {
@@ -602,37 +620,40 @@ impl EggDoneApp {
             }
         }
 
-        if self.is_focus_running && now.duration_since(self.last_sec_tick).as_secs() >= 1 {
-            self.last_sec_tick = now;
-            if self.remaining_secs > 0 {
-                self.remaining_secs -= 1;
-            }
-            let m = self.remaining_secs / 60;
-            let s = self.remaining_secs % 60;
-            self.ball_time_str = format!("{:02}:{:02}", m, s);
+        if self.is_focus_running {
+            // 【优化】真实物理时间差补偿：即使系统强制休眠，唤醒后也能精准扣除流逝的时间
+            let elapsed_secs = now.duration_since(self.last_sec_tick).as_secs();
+            if elapsed_secs >= 1 {
+                self.last_sec_tick += std::time::Duration::from_secs(elapsed_secs);
+                self.remaining_secs = self.remaining_secs.saturating_sub(elapsed_secs as u32);
+              
+                let m = self.remaining_secs / 60;
+                let s = self.remaining_secs % 60;
+                self.ball_time_str = format!("{:02}:{:02}", m, s);
 
-            if !self.is_resting {
-                let total = (self.focus_minutes * 60).max(1) as f32;
-                let elapsed = (self.focus_minutes * 60 - self.remaining_secs) as f32;
-                let ratio = elapsed / total;
-                self.ball_icon = if ratio < 0.25 { "🌰" } else if ratio < 0.6 { "🌱" } else if ratio < 0.9 { "🌿" } else { "🌲" }.to_string();
+                if !self.is_resting {
+                    let total = (self.focus_minutes * 60).max(1) as f32;
+                    let elapsed = (self.focus_minutes * 60 - self.remaining_secs) as f32;
+                    let ratio = elapsed / total;
+                    self.ball_icon = if ratio < 0.25 { "🌰" } else if ratio < 0.6 { "🌱" } else if ratio < 0.9 { "🌿" } else { "🌲" }.to_string();
 
-                if self.remaining_secs == 0 {
-                    self.is_focus_running = false;
-                    self.record_forest("healthy");
-                    if let Some((uuid, title)) = self.current_focus_task.clone() {
-                        self.complete_task(&uuid);
-                        let _ = Notification::new().summary("🌲 专注达成！").body(&format!("事项已完成：{}", title)).show();
-                    } else {
-                        let _ = Notification::new().summary("🌲 专注完成！").body("休息一下吧 ☕").show();
+                    if self.remaining_secs == 0 {
+                        self.is_focus_running = false;
+                        self.record_forest("healthy");
+                        if let Some((uuid, title)) = self.current_focus_task.clone() {
+                            self.complete_task(&uuid);
+                            let _ = Notification::new().summary("🌲 专注达成！").body(&format!("事项已完成：{}", title)).show();
+                        } else {
+                            let _ = Notification::new().summary("🌲 专注完成！").body("休息一下吧 ☕").show();
+                        }
+                        self.trigger_rest_popup_window(ctx);
                     }
-                    self.trigger_rest_popup_window(ctx);
-                }
-            } else {
-                self.ball_icon = "☕".to_string();
-                if self.remaining_secs == 0 {
-                    self.reset_forest_session();
-                    let _ = Notification::new().summary("☕ 休息结束").body("元气满满，准备开启下一轮吧！").show();
+                } else {
+                    self.ball_icon = "☕".to_string();
+                    if self.remaining_secs == 0 {
+                        self.reset_forest_session();
+                        let _ = Notification::new().summary("☕ 休息结束").body("元气满满，准备开启下一轮吧！").show();
+                    }
                 }
             }
         }
@@ -644,8 +665,8 @@ impl EggDoneApp {
                 self.sync_repeat_plans();
                 self.save_all_data();
             }
-            let d_str = cur_date.format("%Y-%m-%d").to_string();
-            let t_str = Local::now().format("%H:%M").to_string();
+            let d_str = self.cached_today_str.clone();
+            let t_str = self.cached_now_hm.clone();
             let mut notified_any = false;
             for task in &mut self.todos {
                 let r_time = task.reminder_time.as_ref().or(task.due_time.as_ref());
@@ -1570,7 +1591,6 @@ impl EggDoneApp {
             }
         }
 
-        // 优化点：删除专注任务时，同样自动清理专注面板的状态
         if let Some((uuid, title)) = self.confirm_delete_task.clone() {
             egui::Window::new("⚠️ 确认删除事项")
                 .collapsible(false)
@@ -1670,7 +1690,13 @@ impl eframe::App for EggDoneApp {
         if self.is_focus_running && !self.is_resting && self.ball_icon == "🌰" {
             self.ball_icon = "🌱".to_string();
         }
-        ctx.request_repaint_after(std::time::Duration::from_millis(200));
+
+        // 【优化】智能休眠引擎：运行倒计时或有弹窗时 250ms 刷新；平时 1000ms 深度休眠
+        if self.is_focus_running || self.toast.is_some() || !self.pending_confirm.is_empty() {
+            ctx.request_repaint_after(std::time::Duration::from_millis(250));
+        } else {
+            ctx.request_repaint_after(std::time::Duration::from_secs(1));
+        }
 
         if self.is_rest_popup_mode {
             egui::CentralPanel::default().frame(egui::Frame::none()).show(ctx, |ui| {
@@ -1725,7 +1751,6 @@ impl eframe::App for EggDoneApp {
                     self.hover_enter_time = None;
                 }
 
-                // 优化点：原生丝滑拖拽，并监听松手落盘坐标
                 if resp.dragged_by(egui::PointerButton::Primary) {
                     ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                     self.has_dragged = true;
@@ -1876,8 +1901,10 @@ impl eframe::App for EggDoneApp {
                 });
 
             ui.add_space(8.0);
-            let today_s = today_str();
-            let now_hm = Local::now().format("%H:%M").to_string();
+          
+            // 【优化】直接从内存缓存读取当下的日期和时间，告别每帧创建 String 对象
+            let today_s = &self.cached_today_str;
+            let now_hm = &self.cached_now_hm;
 
             match self.current_tab {
                 ViewTab::All | ViewTab::Quadrants => {
@@ -1955,7 +1982,7 @@ impl eframe::App for EggDoneApp {
                                 });
                             }
                             for (task, rule_disp) in visible_tasks {
-                                self.render_task_card(ui, &task, &rule_disp, &today_s, &now_hm);
+                                self.render_task_card(ui, &task, &rule_disp, today_s, now_hm);
                                 ui.add_space(6.0);
                             }
                         });
@@ -1966,19 +1993,19 @@ impl eframe::App for EggDoneApp {
 
                         ui.horizontal(|ui| {
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
-                                self.render_quadrant_box(ui, "🔥 重要且紧急", Color32::from_rgb(255, 205, 210), Color32::from_rgb(255, 248, 248), 1, &today_s);
+                                self.render_quadrant_box(ui, "🔥 重要且紧急", Color32::from_rgb(255, 205, 210), Color32::from_rgb(255, 248, 248), 1, today_s);
                             });
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
-                                self.render_quadrant_box(ui, "⭐ 重要不紧急", Color32::from_rgb(255, 224, 178), Color32::from_rgb(255, 252, 245), 2, &today_s);
+                                self.render_quadrant_box(ui, "⭐ 重要不紧急", Color32::from_rgb(255, 224, 178), Color32::from_rgb(255, 252, 245), 2, today_s);
                             });
                         });
                         ui.add_space(6.0);
                         ui.horizontal(|ui| {
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
-                                self.render_quadrant_box(ui, "⚡ 紧急不重要", Color32::from_rgb(187, 222, 251), Color32::from_rgb(245, 250, 255), 3, &today_s);
+                                self.render_quadrant_box(ui, "⚡ 紧急不重要", Color32::from_rgb(187, 222, 251), Color32::from_rgb(245, 250, 255), 3, today_s);
                             });
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
-                                self.render_quadrant_box(ui, "🌱 不重要不紧急", Color32::from_rgb(200, 230, 201), Color32::from_rgb(246, 252, 246), 4, &today_s);
+                                self.render_quadrant_box(ui, "🌱 不重要不紧急", Color32::from_rgb(200, 230, 201), Color32::from_rgb(246, 252, 246), 4, today_s);
                             });
                         });
                     }
@@ -2213,7 +2240,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "EggDone",
         options,
-        // 这里把 Ok() 彻底去掉了，兼容 eframe 0.27.2 的签名！
         Box::new(move |cc| Box::new(EggDoneApp::new(cc, init_pos))),
     )
 }
