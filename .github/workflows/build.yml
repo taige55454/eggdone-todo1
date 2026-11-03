@@ -1,0 +1,30 @@
+name: Build EggDone Todo
+
+on:
+  push:
+    branches: [ "main", "master" ]
+  workflow_dispatch: # 允许你在网页上手动点击按钮触发编译
+
+jobs:
+  build-windows:
+    name: Build Windows EXE
+    runs-on: windows-latest
+
+    steps:
+      - name: 1. 检出代码 (Checkout)
+        uses: actions/checkout@v4
+
+      - name: 2. 安装 Rust 稳定版工具链
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: 3. 启用编译缓存 (大幅加速后续编译)
+        uses: Swatinem/rust-cache@v2
+
+      - name: 4. 开始编译 Release 最优版本
+        run: cargo build --release
+
+      - name: 5. 上传编译好的 EXE 供下载
+        uses: actions/upload-artifact@v4
+        with:
+          name: EggDoneTodo-Windows-x64
+          path: target/release/eggdone_todo.exe
