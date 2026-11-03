@@ -1024,7 +1024,7 @@ impl EggDoneApp {
         });
     }
 
-    fn render_quadrant_box(&mut self, ui: &mut egui::Ui, title: &str, head_bg: Color32, body_bg: Color32, q_num: u8, today_s: &str) {
+        fn render_quadrant_box(&mut self, ui: &mut egui::Ui, title: &str, head_bg: Color32, body_bg: Color32, q_num: u8, today_s: &str) {
         let tasks: Vec<TodoTask> = self.todos.iter()
             .filter(|t| t.hide_until.as_ref().map(|h| today_s >= h.as_str()).unwrap_or(true))
             .filter(|t| compute_quadrant(t, today_s) == q_num)
@@ -1040,71 +1040,67 @@ impl EggDoneApp {
             .stroke(Stroke::new(1.0, head_bg))
             .inner_margin(egui::Margin::same(5.0))
             .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.set_height(ui.available_height());
+                // 【修复核心】：强制开启垂直布局，防止继承外部水平布局导致左右排列和文字竖向挤压
+                ui.vertical(|ui| {
+                    ui.set_width(ui.available_width());
+                    ui.set_height(ui.available_height());
 
-                ui.vertical_centered(|ui| {
-                    ui.add_space(4.0);
-                    ui.label(RichText::new(title).size(11.5).strong().color(Color32::from_rgb(38, 50, 56)));
-                    ui.label(RichText::new(count_text).size(10.0).color(Color32::from_rgb(96, 125, 139)));
-                    ui.add_space(4.0);
-                });
-
-                egui::ScrollArea::vertical()
-                    .id_source(format!("quad_scroll_{}", q_num))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        ui.set_max_width(ui.available_width());
-                      
-                        if tasks.is_empty() {
-                            ui.add_space(20.0);
-                            ui.vertical_centered(|ui| {
-                                ui.label(RichText::new("暂无事项").size(10.5).color(Color32::from_rgb(175, 185, 175)));
-                            });
-                        }
-                        for t in tasks {
-                            let is_p = self.pending_confirm.contains_key(&t.uuid);
-                            let mut lbl = if is_p { format!("✔️ {}", t.text) } else { format!("◯ {}", t.text) };
-                            if let Some(ref tm) = t.due_time {
-                                lbl.push_str(&format!(" 🕒{}", tm));
-                            }
-                            let col = if is_p { Color32::from_rgb(21, 101, 192) } else { Color32::from_rgb(45, 55, 60) };
-
-                            let r = ui.add(
-                                egui::Label::new(RichText::new(lbl).size(10.5).color(col))
-                                    .wrap(true)
-                                    .sense(Sense::click()),
-                            );
-                            let r = r.on_hover_text(format!("点击两次完成 | 右键更多操作\n事项：{}", t.text));
-                            if r.clicked() {
-                                if is_p {
-                                    self.complete_task(&t.uuid);
-                                } else {
-                                    self.pending_confirm.insert(t.uuid.clone(), Instant::now());
-                                }
-                            }
-                            r.context_menu(|ui| {
-                                if ui.button("🎯 设为专注目标").clicked() {
-                                    self.current_focus_task = Some((t.uuid.clone(), t.text.clone()));
-                                    self.current_tab = ViewTab::Forest;
-                                    ui.close_menu();
-                                }
-                                if ui.button("➡️ 延后一天").clicked() {
-                                    self.postpone_task(&t.uuid);
-                                    ui.close_menu();
-                                }
-                                if ui.button("✏️ 编辑事项").clicked() {
-                                    self.open_task_editor(&t);
-                                    ui.close_menu();
-                                }
-                                if ui.button(RichText::new("🗑️ 删除事项").color(Color32::RED)).clicked() {
-                                    self.confirm_delete_task = Some((t.uuid.clone(), t.text.clone()));
-                                    ui.close_menu();
-                                }
-                            });
-                            ui.add_space(3.0);
-                        }
+                    ui.vertical_centered(|ui| {
+                        ui.add_space(4.0);
+                        ui.label(RichText::new(title).size(11.5).strong().color(Color32::from_rgb(38, 50, 56)));
+                        ui.label(RichText::new(count_text).size(10.0).color(Color32::from_rgb(96, 125, 139)));
+                        ui.add_space(4.0);
                     });
+
+                    egui::ScrollArea::vertical()
+                        .id_source(format!("quad_scroll_{}", q_num))
+                        .auto_shrink([false, false])
+                        .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
+                          
+                            for t in tasks {
+                                let is_p = self.pending_confirm.contains_key(&t.uuid);
+                                
+                                // 【修复】：去掉了时间显示，只保留横向的任务文本
+                                let lbl = if is_p { format!("✔️ {}", t.text) } else { format!("◯ {}", t.text) };
+                                let col = if is_p { Color32::from_rgb(21, 101, 192) } else { Color32::from_rgb(45, 55, 60) };
+
+                                let r = ui.add(
+                                    egui::Label::new(RichText::new(lbl).size(10.5).color(col))
+                                        .wrap(true)
+                                        .sense(Sense::click()),
+                                );
+                                let r = r.on_hover_text(format!("点击两次完成 | 右键更多操作\n事项：{}", t.text));
+                                if r.clicked() {
+                                    if is_p {
+                                        self.complete_task(&t.uuid);
+                                    } else {
+                                        self.pending_confirm.insert(t.uuid.clone(), Instant::now());
+                                    }
+                                }
+                                r.context_menu(|ui| {
+                                    if ui.button("🎯 设为专注目标").clicked() {
+                                        self.current_focus_task = Some((t.uuid.clone(), t.text.clone()));
+                                        self.current_tab = ViewTab::Forest;
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("➡️ 延后一天").clicked() {
+                                        self.postpone_task(&t.uuid);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button("✏️ 编辑事项").clicked() {
+                                        self.open_task_editor(&t);
+                                        ui.close_menu();
+                                    }
+                                    if ui.button(RichText::new("🗑️ 删除事项").color(Color32::RED)).clicked() {
+                                        self.confirm_delete_task = Some((t.uuid.clone(), t.text.clone()));
+                                        ui.close_menu();
+                                    }
+                                });
+                                ui.add_space(3.0);
+                            }
+                        });
+                }); // 垂直布局结束
             });
     }
 
