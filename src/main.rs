@@ -1740,7 +1740,7 @@ impl eframe::App for EggDoneApp {
                 if resp.hovered() && !ctx.input(|i| i.pointer.any_down()) {
                     if self.hover_enter_time.is_none() {
                         self.hover_enter_time = Some(Instant::now());
-                    } else if self.hover_enter_time.unwrap().elapsed().as_millis() > 260 {
+                    } else if self.hover_enter_time.unwrap().elapsed().as_millis() > 120 {
                         self.expand_window(ctx);
                     }
                 } else {
@@ -1985,8 +1985,8 @@ impl eframe::App for EggDoneApp {
                         // 【修复】四象限精准布局，从总宽高中扣除间距避免溢出
                         let total_w = ui.available_width();
                         let total_h = ui.available_height();
-                        let gap = 4.0;
-                        let half_w = (total_w - gap) * 0.5;
+                        let gap = 8.0;
+                        let half_w = (total_w - gap) * 0.4;
                         let half_h = (total_h - gap) * 0.5;
 
                         ui.horizontal(|ui| {
