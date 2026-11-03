@@ -354,6 +354,7 @@ impl EggDoneApp {
         self.mouse_leave_time = None;
         self.hover_enter_time = None;
 
+        // 【修复】直接保存当前悬浮球的真实位置，不要重新计算
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
             self.ball_pos = rect.min;
         }
@@ -361,15 +362,16 @@ impl EggDoneApp {
         let monitor = ctx.input(|i| i.viewport().monitor_size).unwrap_or(Vec2::new(1920.0, 1080.0));
         let max_y = (monitor.y - 650.0).max(10.0);
 
+        // 【修复】主窗口扩展到 380px 宽度，避免右侧溢出
         let target_x = if self.ball_pos.x > 340.0 {
-            (self.ball_pos.x + 64.0 - 360.0).max(10.0)
+            (self.ball_pos.x + 64.0 - 380.0).max(10.0)
         } else {
             self.ball_pos.x.max(10.0)
         };
         let target_y = self.ball_pos.y.clamp(10.0, max_y);
         self.panel_pos = Pos2::new(target_x, target_y);
 
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(360.0, 640.0)));
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(Vec2::new(380.0, 640.0)));
         ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(self.panel_pos));
         ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
     }
@@ -381,10 +383,15 @@ impl EggDoneApp {
         self.mouse_leave_time = None;
         self.hover_enter_time = None;
 
+        // 【修复】收起时精确还原悬浮球位置，避免乱跑
         if let Some(rect) = ctx.input(|i| i.viewport().outer_rect) {
             self.panel_pos = rect.min;
-            self.ball_pos.x = if self.panel_pos.x > 10.0 { self.panel_pos.x + 360.0 - 64.0 } else { self.panel_pos.x };
-            self.ball_pos.y = self.panel_pos.y;
+            // 根据展开方向反推悬浮球位置
+            self.ball_pos = if self.panel_pos.x > 20.0 {
+                Pos2::new(self.panel_pos.x + 380.0 - 64.0, self.panel_pos.y)
+            } else {
+                self.panel_pos
+            };
             self.config.ball_x = self.ball_pos.x;
             self.config.ball_y = self.ball_pos.y;
             safe_json_dump("config.json", &self.config);
@@ -942,7 +949,7 @@ impl EggDoneApp {
                 let title_str = if is_pending { format!("【再点一次完成】{}", task.text) } else { task.text.clone() };
                 let title_col = if is_pending { Color32::from_rgb(21, 101, 192) } else { Color32::from_rgb(38, 50, 56) };
                 ui.vertical(|ui| {
-                    ui.set_max_width(185.0);
+                    ui.set_max_width(200.0);
                     ui.add(egui::Label::new(RichText::new(title_str).size(13.5).color(title_col).strong()).wrap(true));
                 });
 
@@ -1891,7 +1898,6 @@ impl eframe::App for EggDoneApp {
 
             ui.add_space(8.0);
             
-            // 【修复借用冲突】将缓存的日期和时间 clone 到栈上，彻底断开对 self 的不可变引用
             let today_s = self.cached_today_str.clone();
             let now_hm = self.cached_now_hm.clone();
 
@@ -1976,27 +1982,28 @@ impl eframe::App for EggDoneApp {
                             }
                         });
                     } else {
-                        // 【四象限精准自适应布局】
+                        // 【修复】四象限精准布局，从总宽高中扣除间距避免溢出
                         let total_w = ui.available_width();
                         let total_h = ui.available_height();
-                        let half_w = (total_w - 8.0) * 0.5;
-                        let half_h = (total_h - 8.0) * 0.5;
+                        let gap = 6.0;
+                        let half_w = (total_w - gap) * 0.5;
+                        let half_h = (total_h - gap) * 0.5;
 
                         ui.horizontal(|ui| {
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
                                 self.render_quadrant_box(ui, "🔥 重要且紧急", Color32::from_rgb(255, 205, 210), Color32::from_rgb(255, 248, 248), 1, &today_s);
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(gap);
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
                                 self.render_quadrant_box(ui, "⭐ 重要不紧急", Color32::from_rgb(255, 224, 178), Color32::from_rgb(255, 252, 245), 2, &today_s);
                             });
                         });
-                        ui.add_space(4.0);
+                        ui.add_space(gap);
                         ui.horizontal(|ui| {
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
                                 self.render_quadrant_box(ui, "⚡ 紧急不重要", Color32::from_rgb(187, 222, 251), Color32::from_rgb(245, 250, 255), 3, &today_s);
                             });
-                            ui.add_space(4.0);
+                            ui.add_space(gap);
                             ui.allocate_ui(Vec2::new(half_w, half_h), |ui| {
                                 self.render_quadrant_box(ui, "🌱 不重要不紧急", Color32::from_rgb(200, 230, 201), Color32::from_rgb(246, 252, 246), 4, &today_s);
                             });
@@ -2032,7 +2039,7 @@ impl eframe::App for EggDoneApp {
                                 .show(ui, |ui| {
                                     ui.horizontal(|ui| {
                                         ui.vertical(|ui| {
-                                            ui.set_max_width(210.0);
+                                            ui.set_max_width(230.0);
                                             ui.label(RichText::new(&p.text).size(13.5).strong());
                                             ui.add_space(3.0);
                                             ui.horizontal(|ui| {
