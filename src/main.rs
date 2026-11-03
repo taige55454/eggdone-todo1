@@ -57,6 +57,7 @@ fn set_autostart(_enable: bool) -> bool {
 }
 
 // ================= 路径寻址与高容灾读写引擎 =================
+// 注意：在 Parallels 共享文件夹 (如 \\Mac\Home\Desktop) 下，current_exe 依然能正确定位所在目录
 fn get_base_dir() -> PathBuf {
     env::current_exe()
         .ok()
@@ -110,8 +111,14 @@ fn safe_json_dump<T: Serialize + ?Sized>(filename: &str, data: &T) {
     }
 
     if let Ok(json_str) = serde_json::to_string_pretty(data) {
-        if fs::write(&tmp_path, json_str).is_ok() {
-            let _ = fs::rename(&tmp_path, &path);
+        if fs::write(&tmp_path, &json_str).is_ok() {
+            // 针对 Parallels Mac 共享目录 (\\Mac\Home\...) 兼容：如果 rename 跨文件系统失败，则直接写入目标文件
+            if fs::rename(&tmp_path, &path).is_err() {
+                let _ = fs::write(&path, &json_str);
+                let _ = fs::remove_file(&tmp_path);
+            }
+        } else {
+            let _ = fs::write(&path, &json_str);
         }
     }
 }
@@ -561,6 +568,7 @@ struct EggDoneApp {
     history: Vec<HistoryRecord>,
 
     is_expanded: bool,
+    auto_collapse_enabled: bool, // 新增开关：防止在虚拟机里鼠标移出窗口瞬间消失找不到
     current_view: ViewTab,
     input_text: String,
     parsed_preview: Vec<String>,
@@ -634,7 +642,9 @@ impl EggDoneApp {
             todos,
             plans,
             history,
-            is_expanded: false,
+            // 默认启动直接展开主面板！让你双击立刻看到完整界面！
+            is_expanded: true,
+            auto_collapse_enabled: true,
             current_view: ViewTab::All,
             input_text: String::new(),
             parsed_preview: Vec::new(),
@@ -797,8 +807,10 @@ impl EggDoneApp {
             self.is_expanded = true;
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(360.0, 640.0)));
             if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
-                let x = (monitor_size.x - 360.0 - 20.0).max(0.0);
-                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::new(x, 60.0)));
+                if monitor_size.x > 400.0 {
+                    let x = (monitor_size.x - 360.0 - 20.0).max(20.0);
+                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::new(x, 60.0)));
+                }
             }
         }
     }
@@ -810,8 +822,10 @@ impl EggDoneApp {
             self.parsed_preview.clear();
             ctx.send_viewport_cmd(ViewportCommand::InnerSize(Vec2::new(64.0, 64.0)));
             if let Some(monitor_size) = ctx.input(|i| i.viewport().monitor_size) {
-                let x = (monitor_size.x - 64.0 - 20.0).max(0.0);
-                ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::new(x, 60.0)));
+                if monitor_size.x > 100.0 {
+                    let x = (monitor_size.x - 64.0 - 20.0).max(20.0);
+                    ctx.send_viewport_cmd(ViewportCommand::OuterPosition(Pos2::new(x, 60.0)));
+                }
             }
         }
     }
@@ -1171,18 +1185,21 @@ impl EggDoneApp {
             }
         }
 
+        // 自动折叠检测（支持在设置菜单中随时开关）
         let pointer_in_window = ctx.input(|i| i.pointer.has_pointer());
-        if self.is_expanded && !self.is_any_modal_open() {
-            if pointer_in_window || ctx.memory(|m| m.focused().is_some()) {
-                self.last_hover_leave = None;
-            } else if self.last_hover_leave.is_none() {
-                self.last_hover_leave = Some(now);
-            } else if now.duration_since(self.last_hover_leave.unwrap()).as_millis() > 450 {
-                self.collapse_window(ctx);
-                self.last_hover_leave = None;
+        if self.auto_collapse_enabled {
+            if self.is_expanded && !self.is_any_modal_open() {
+                if pointer_in_window || ctx.memory(|m| m.focused().is_some()) {
+                    self.last_hover_leave = None;
+                } else if self.last_hover_leave.is_none() {
+                    self.last_hover_leave = Some(now);
+                } else if now.duration_since(self.last_hover_leave.unwrap()).as_millis() > 650 {
+                    self.collapse_window(ctx);
+                    self.last_hover_leave = None;
+                }
+            } else if !self.is_expanded && pointer_in_window {
+                self.expand_window(ctx);
             }
-        } else if !self.is_expanded && pointer_in_window {
-            self.expand_window(ctx);
         }
 
         if self.is_focus_running || !self.pending_confirm.is_empty() || self.toast.is_some() || self.withered_anim_until.is_some() || self.last_hover_leave.is_some() {
@@ -1247,8 +1264,8 @@ impl EggDoneApp {
                 painter.circle(
                     rect.center(),
                     28.0,
-                    Color32::from_rgba_unmultiplied(30, 30, 30, 195),
-                    Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 215, 0, 210)),
+                    Color32::from_rgba_unmultiplied(30, 30, 30, 215),
+                    Stroke::new(2.0_f32, Color32::from_rgba_unmultiplied(255, 215, 0, 230)),
                 );
 
                 let (icon, time_str) = if self.withered_anim_until.is_some() {
@@ -1290,9 +1307,9 @@ impl EggDoneApp {
 
     fn render_expanded_panel(&mut self, ctx: &egui::Context) {
         let panel_frame = egui::Frame::none()
-            .fill(Color32::from_rgba_unmultiplied(250, 250, 252, 252))
+            .fill(Color32::from_rgba_unmultiplied(250, 250, 252, 255))
             .rounding(Rounding::same(14.0))
-            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(180, 180, 180, 200)))
+            .stroke(Stroke::new(1.0_f32, Color32::from_rgba_unmultiplied(180, 180, 180, 220)))
             .inner_margin(egui::Margin::symmetric(12.0, 14.0));
 
         egui::CentralPanel::default().frame(panel_frame).show(ctx, |ui| {
@@ -1307,7 +1324,8 @@ impl EggDoneApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.menu_button(RichText::new("⚙️").size(14.0), |ui| {
-                        ui.set_min_width(130.0);
+                        ui.set_min_width(150.0);
+                        ui.checkbox(&mut self.auto_collapse_enabled, "🧲 鼠标移出自动收缩");
                         if ui.checkbox(&mut self.autostart, "⚡ 开机自动启动").changed() {
                             if set_autostart(self.autostart) {
                                 let msg = if self.autostart { "✅ 已开启开机自启" } else { "🚫 已关闭开机自启" };
@@ -1318,7 +1336,7 @@ impl EggDoneApp {
                             }
                             ui.close_menu();
                         }
-                        if ui.button("➖ 最小化为悬浮球").clicked() {
+                        if ui.button("➖ 立即收缩为悬浮球").clicked() {
                             ui.close_menu();
                             self.collapse_window(ctx);
                         }
@@ -2210,39 +2228,54 @@ fn draw_badge(ui: &mut egui::Ui, text: &str, bg: Color32, fg: Color32) {
         });
 }
 
+// 彻底修复字体闪退：绝不加载 .ttc 集合文件！仅加载单字体 .ttf / .otf 并校验文件头
+fn is_valid_single_font(bytes: &[u8]) -> bool {
+    if bytes.len() < 4 {
+        return false;
+    }
+    let magic = &bytes[0..4];
+    // 0x00010000 = TrueType (.ttf), b"OTTO" = OpenType (.otf), b"true" = Apple TrueType
+    // 严禁 b"ttcf" (.ttc 集合文件会导致 ab_glyph 崩溃闪退)
+    magic == [0x00, 0x01, 0x00, 0x00] || magic == b"OTTO" || magic == b"true"
+}
+
 fn setup_custom_fonts(ctx: &egui::Context) {
     let mut fonts = FontDefinitions::default();
 
+    // 全部使用标准单一 .ttf/.otf 字体文件（Windows 10/11 原生自带 simhei.ttf 和 simkai.ttf）
     let cjk_candidates = [
-        "C:\\Windows\\Fonts\\msyh.ttc",
-        "C:\\Windows\\Fonts\\msyh.ttf",
         "C:\\Windows\\Fonts\\simhei.ttf",
-        "/System/Library/Fonts/PingFang.ttc",
-        "/System/Library/Fonts/STHeiti Light.ttc",
-        "/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+        "C:\\Windows\\Fonts\\msyh.ttf",
+        "C:\\Windows\\Fonts\\simkai.ttf",
+        "C:\\Windows\\Fonts\\simfang.ttf",
+        "C:\\Windows\\Fonts\\Deng.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
+        "/Library/Fonts/Arial Unicode.ttf",
     ];
 
     for path in cjk_candidates {
         if let Ok(bytes) = fs::read(path) {
-            fonts.font_data.insert("cjk".to_owned(), FontData::from_owned(bytes));
-            fonts.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "cjk".to_owned());
-            fonts.families.get_mut(&FontFamily::Monospace).unwrap().push("cjk".to_owned());
-            break;
+            if is_valid_single_font(&bytes) {
+                fonts.font_data.insert("cjk".to_owned(), FontData::from_owned(bytes));
+                fonts.families.get_mut(&FontFamily::Proportional).unwrap().insert(0, "cjk".to_owned());
+                fonts.families.get_mut(&FontFamily::Monospace).unwrap().push("cjk".to_owned());
+                break;
+            }
         }
     }
 
     let emoji_candidates = [
         "C:\\Windows\\Fonts\\seguiemj.ttf",
-        "/System/Library/Fonts/Apple Color Emoji.ttc",
         "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     ];
 
     for path in emoji_candidates {
         if let Ok(bytes) = fs::read(path) {
-            fonts.font_data.insert("sys_emoji".to_owned(), FontData::from_owned(bytes));
-            fonts.families.get_mut(&FontFamily::Proportional).unwrap().push("sys_emoji".to_owned());
-            break;
+            if is_valid_single_font(&bytes) {
+                fonts.font_data.insert("sys_emoji".to_owned(), FontData::from_owned(bytes));
+                fonts.families.get_mut(&FontFamily::Proportional).unwrap().push("sys_emoji".to_owned());
+                break;
+            }
         }
     }
 
@@ -2250,22 +2283,32 @@ fn setup_custom_fonts(ctx: &egui::Context) {
 }
 
 fn main() -> eframe::Result<()> {
-    let instance = SingleInstance::new("EggDone_Rust_Instance_Mutex").unwrap();
-    if !instance.is_single() {
-        let _ = Notification::new()
-            .summary("提示")
-            .body("待办程序已在运行中！请查看屏幕右侧悬浮球。")
-            .show();
-        std::process::exit(0);
+    // 加上全局崩溃日志写出：万一发生异常，在同目录生成 crash.log 方便排查
+    std::panic::set_hook(Box::new(|info| {
+        let log_path = get_base_dir().join("crash.log");
+        let _ = fs::write(log_path, format!("Panic occurred:\n{}", info));
+    }));
+
+    if let Ok(instance) = SingleInstance::new("EggDone_Rust_Instance_Mutex") {
+        if !instance.is_single() {
+            let _ = Notification::new()
+                .summary("提示")
+                .body("待办程序已在运行中！")
+                .show();
+            std::process::exit(0);
+        }
+        // 保持锁存活直到进程结束
+        std::mem::forget(instance);
     }
 
+    // 默认启动直接展开 360x640 主面板，放在屏幕显眼位置 [200.0, 80.0]，且在任务栏显示图标
     let viewport = egui::ViewportBuilder::default()
         .with_decorations(false)
         .with_transparent(true)
         .with_always_on_top()
-        .with_taskbar(false)
-        .with_inner_size([64.0, 64.0])
-        .with_position([1200.0, 60.0]);
+        .with_taskbar(true)
+        .with_inner_size([360.0, 640.0])
+        .with_position([200.0, 80.0]);
 
     let options = eframe::NativeOptions {
         viewport,
@@ -2278,3 +2321,8 @@ fn main() -> eframe::Result<()> {
         Box::new(|cc| Box::new(EggDoneApp::new(cc))),
     )
 }
+                                        } else {
+                                            format!("◯ {}", task.text)
+                                        };
+
+                                        let fg = if is_pending { Color32::
