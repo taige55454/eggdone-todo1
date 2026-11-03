@@ -1,6 +1,6 @@
 [package]
 name = "eggdone_todo"
-version = "1.0.1"
+version = "1.1.0"
 edition = "2021"
 description = "极简桌面悬浮待办与专注森林"
 
@@ -13,6 +13,7 @@ uuid = { version = "1.8", features = ["v4", "serde"] }
 regex = "1.10"
 notify-rust = "4.11"
 single-instance = "0.3"
+tray-icon = "0.14"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
