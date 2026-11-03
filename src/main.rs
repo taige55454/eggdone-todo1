@@ -1981,8 +1981,8 @@ impl eframe::App for EggDoneApp {
                         // 【修复】四象限精准布局，从总宽高中扣除间距避免溢出
                         let total_w = ui.available_width();
                         let total_h = ui.available_height();
-                        let gap = 8.0;
-                        let half_w = (total_w - gap) * 0.4;
+                        let gap = 6.0;
+                        let half_w = (total_w - gap) * 0.48;
                         let half_h = (total_h - gap) * 0.5;
 
                         ui.horizontal(|ui| {
