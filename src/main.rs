@@ -49,7 +49,7 @@ struct EggDoneApp {
     todos: Vec<TodoTask>,
     history: Vec<HistoryRecord>,
     plans: Vec<Plan>,
-    cached_forest_records: Vec<ForestRecord>, // 新增：内存级专注记录缓存，彻底解决高频磁盘I/O瓶颈
+    cached_forest_records: Vec<ForestRecord>, // 内存级专注记录缓存，彻底解决高频磁盘I/O瓶颈
 
     is_expanded: bool,
     is_rest_popup_mode: bool,
@@ -654,7 +654,8 @@ impl EggDoneApp {
         } else {
             for (idx, t) in tasks.iter().enumerate() {
                 let mut tm_parts = Vec::new();
-                if let Some(ref d) = t.due_date { if d.len() >= 5 { tm_parts.push(d[5..].to_string()); } }
+                // ✅ 彻底解决 UTF-8 切片崩溃
+                if let Some(ref d) = t.due_date { if d.chars().count() >= 5 { tm_parts.push(d.chars().skip(5).collect()); } }
                 if let Some(ref tm) = t.due_time { tm_parts.push(tm.clone()); }
                 let tm_str = if tm_parts.is_empty() { "不限期".to_string() } else { tm_parts.join(" ") };
 
@@ -909,11 +910,13 @@ impl EggDoneApp {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.vertical(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                            // ✅ 彻底解决 UTF-8 切片崩溃
                             if let Some(ref dd) = task.due_date {
-                                let short_d = if dd.len() >= 5 { &dd[5..] } else { dd.as_str() };
+                                let short_d = if dd.chars().count() >= 5 { dd.chars().skip(5).collect::<String>() } else { dd.clone() };
                                 let badge_txt = if let Some(ref orig) = task.original_due {
-                                    if orig != dd && orig.len() >= 5 {
-                                        format!("{}📅{}(延)", if is_overdue { "⚠️" } else { "" }, &orig[5..])
+                                    if orig != dd && orig.chars().count() >= 5 {
+                                        let orig_short: String = orig.chars().skip(5).collect();
+                                        format!("{}📅{}(延)", if is_overdue { "⚠️" } else { "" }, orig_short)
                                     } else {
                                         format!("{}📅{}", if is_overdue { "⚠️" } else { "" }, short_d)
                                     }
@@ -1012,7 +1015,6 @@ impl EggDoneApp {
                     .id_source(format!("quad_scroll_{}", q_num))
                     .auto_shrink([false, false])
                     .show(ui, |ui| {
-                        // 强制限制容器宽度，彻底杜绝内容过长导致面板被横向撑破
                         ui.set_max_width(ui.available_width());
                       
                         if tasks.is_empty() {
@@ -1416,7 +1418,6 @@ impl EggDoneApp {
                 .fixed_size(Vec2::new(344.0, 550.0))
                 .anchor(egui::Align2::CENTER_CENTER, Vec2::ZERO)
                 .show(ctx, |ui| {
-                    // 读取内存中的数据而不是向硬盘发起读取
                     let records = &self.cached_forest_records;
                     let healthy_cnt = records.iter().filter(|r| r.status == "healthy").count();
                     let withered_cnt = records.iter().filter(|r| r.status == "withered").count();
@@ -1688,7 +1689,7 @@ impl eframe::App for EggDoneApp {
                         self.hover_enter_time = Some(Instant::now());
                     } else if self.hover_enter_time.unwrap().elapsed().as_millis() > 260 {
                         self.expand_window(ctx);
-                        return;
+                        // ✅ 这里去掉了 return; 解决画面闪烁
                     }
                 } else {
                     self.hover_enter_time = None;
@@ -1773,7 +1774,7 @@ impl eframe::App for EggDoneApp {
                 self.mouse_leave_time = Some(Instant::now());
             } else if self.mouse_leave_time.unwrap().elapsed().as_millis() > 450 {
                 self.collapse_window(ctx);
-                return;
+                // ✅ 这里去掉了 return; 解决画面闪烁
             }
         } else {
             self.mouse_leave_time = None;
@@ -2089,7 +2090,6 @@ impl eframe::App for EggDoneApp {
                                 ui.add_space(6.0);
                                 ui.horizontal(|ui| {
                                     if ui.button(RichText::new("🏆 森林统计档案").strong().color(Color32::from_rgb(46, 125, 50))).clicked() {
-                                        // 仅在此时触发一次数据读取，并覆盖缓存供弹窗持续使用
                                         self.cached_forest_records = safe_json_load("forest.json");
                                         self.show_forest_stats_modal = true;
                                     }
@@ -2193,6 +2193,6 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "EggDone",
         options,
-        Box::new(move |cc| Ok(Box::new(EggDoneApp::new(cc, init_pos)))), // 这里加了 Ok()
+        Box::new(move |cc| Ok(Box::new(EggDoneApp::new(cc, init_pos)))),
     )
 }
