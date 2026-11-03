@@ -2,18 +2,17 @@
 name = "eggdone_todo"
 version = "1.0.1"
 edition = "2021"
+description = "极简桌面悬浮待办与专注森林"
 
 [dependencies]
-# 显式开启 wgpu (DirectX12/Metal) 渲染器，彻底解决 Parallels 虚拟机与透明窗口驱动黑屏/闪退问题
-eframe = { version = "0.27.2", default-features = false, features = ["wgpu", "default_fonts"] }
-egui = "0.27.2"
+eframe = { version = "0.27", default-features = false, features = ["default_fonts", "wgpu", "glow"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.8", features = ["v4", "serde"] }
 regex = "1.10"
-uuid = { version = "1.8", features = ["v4"] }
-single-instance = "0.3"
 notify-rust = "4.11"
+single-instance = "0.3"
 
 [target.'cfg(windows)'.dependencies]
 winreg = "0.52"
@@ -22,4 +21,5 @@ winreg = "0.52"
 opt-level = "z"
 lto = true
 codegen-units = 1
+panic = "abort"
 strip = true
