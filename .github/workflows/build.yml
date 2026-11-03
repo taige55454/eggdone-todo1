@@ -1,4 +1,4 @@
-name: Build EggDone Todo
+name: Build Windows & macOS Apps
 
 on:
   push:
@@ -6,28 +6,93 @@ on:
   workflow_dispatch:
 
 jobs:
+  # 任务 1：编译 Windows 独立绿色版 .exe
   build-windows:
-    name: Build Windows EXE
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
-      - uses: actions/upload-artifact@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Windows EXE
+        run: cargo build --release
+
+      - name: Upload Windows EXE
+        uses: actions/upload-artifact@v4
         with:
-          name: EggDoneTodo-Windows-x64
+          name: EggDoneTodo-Windows-EXE
           path: target/release/eggdone_todo.exe
 
+  # 任务 2：编译 macOS 原生应用并打包成 .dmg
   build-macos:
-    name: Build macOS Native
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo build --release
-      - uses: actions/upload-artifact@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust Stable (Universal Binary targets)
+        uses: dtolnay/rust-toolchain@stable
         with:
-          name: EggDoneTodo-macOS-AppleSilicon
-          path: target/release/eggdone_todo
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Rust Cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Build Universal Binary (Apple Silicon + Intel)
+        run: |
+          cargo build --release --target aarch64-apple-darwin
+          cargo build --release --target x86_64-apple-darwin
+          mkdir -p target/universal
+          lipo -create -output target/universal/eggdone_todo \
+            target/aarch64-apple-darwin/release/eggdone_todo \
+            target/x86_64-apple-darwin/release/eggdone_todo
+
+      - name: Package .app and .dmg
+        run: |
+          mkdir -p "EggDoneTodo.app/Contents/MacOS"
+          mkdir -p "EggDoneTodo.app/Contents/Resources"
+          cp target/universal/eggdone_todo "EggDoneTodo.app/Contents/MacOS/eggdone_todo"
+          chmod +x "EggDoneTodo.app/Contents/MacOS/eggdone_todo"
+
+          cat << 'EOF' > "EggDoneTodo.app/Contents/Info.plist"
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>CFBundleExecutable</key>
+              <string>eggdone_todo</string>
+              <key>CFBundleIdentifier</key>
+              <string>com.eggdone.todo</string>
+              <key>CFBundleName</key>
+              <string>EggDoneTodo</string>
+              <key>CFBundleDisplayName</key>
+              <string>待办清单</string>
+              <key>CFBundleVersion</key>
+              <string>1.0.1</string>
+              <key>CFBundleShortVersionString</key>
+              <string>1.0.1</string>
+              <key>CFBundlePackageType</key>
+              <string>APPL</string>
+              <key>NSHighResolutionCapable</key>
+              <true/>
+              <key>LSUIElement</key>
+              <false/>
+          </dict>
+          </plist>
+          EOF
+
+          mkdir -p dmg_staging
+          cp -r "EggDoneTodo.app" dmg_staging/
+          ln -s /Applications dmg_staging/Applications
+          hdiutil create -volname "EggDoneTodo" -srcfolder dmg_staging -ov -format UDZO "EggDoneTodo-macOS.dmg"
+
+      - name: Upload macOS DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: EggDoneTodo-macOS-DMG
+          path: EggDoneTodo-macOS.dmg
