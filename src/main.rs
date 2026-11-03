@@ -1,3 +1,4 @@
+#![allow(warnings)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod models;
@@ -1486,7 +1487,8 @@ impl eframe::App for EggDoneApp {
                 }
                 if self.is_dragging_ball && resp.drag_stopped() {
                     self.is_dragging_ball = false;
-                    self.config.ball_pos = Some((self.ball_pos.x, self.ball_pos.y));
+                    self.config.ball_x = self.ball_pos.x;
+                    self.config.ball_y = self.ball_pos.y;
                     safe_json_dump("config.json", &self.config);
                 }
                 if resp.clicked() && !self.has_dragged {
@@ -1658,7 +1660,15 @@ impl eframe::App for EggDoneApp {
                                     .desired_width(ui.available_width() - 36.0);
                                 let resp = ui.add(edit);
                                 if resp.changed() {
-                                    self.parsed_preview = QuickAddParser::parse(&self.input_text).map(|p| p.preview_text).unwrap_or_default();
+                                    self.parsed_preview = QuickAddParser::parse(&self.input_text).map(|p| {
+                                    let mut tip = format!("✨ 标题: {}", p.title);
+                                        if p.priority == 1 { tip.push_str(" | ⭐重要"); }
+                                        if let Some(ref d) = p.due_date { tip.push_str(&format!(" | 📅{}", d)); }
+                                        if let Some(ref t) = p.due_time { tip.push_str(&format!(" 🕒{}", t)); }
+                                        if let Some(ref r) = p.repeat_rule { tip.push_str(&format!(" | 🔁{}", r)); }
+                                        tip
+                                    }).unwrap_or_default();
+                                    
                                 }
                                 if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                                     self.commit_new_task();
@@ -1914,7 +1924,7 @@ fn main() -> eframe::Result<()> {
     }
 
     let cfg: Config = safe_json_load("config.json");
-    let init_pos = cfg.ball_pos.map(|(x, y)| Pos2::new(x.max(10.0), y.max(10.0))).unwrap_or(Pos2::new(1150.0, 120.0));
+    let init_pos = Pos2::new(cfg.ball_x.max(10.0), cfg.ball_y.max(10.0));
 
     let viewport = egui::ViewportBuilder::default()
         .with_inner_size([64.0, 64.0])
