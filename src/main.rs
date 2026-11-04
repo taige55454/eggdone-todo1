@@ -446,6 +446,7 @@ impl EggDoneApp {
                 self.expand_window(ctx);
             } else if Some(&event.id) == self.tray_quit_id.as_ref() {
                 self.allow_quit = true;
+                self.save_all_data(); // <--- 加上这一句，确保安全退出
                 ctx.send_viewport_cmd(egui::ViewportCommand::Close);
             } else if let Some(ref item) = self.tray_auto_item {
                 if &event.id == item.id() {
@@ -1780,6 +1781,7 @@ impl eframe::App for EggDoneApp {
                     ui.separator();
                     if ui.button(RichText::new("✖ 彻底退出程序").color(Color32::from_rgb(211, 47, 47))).clicked() {
                         self.allow_quit = true;
+                        self.save_all_data(); // <--- 加上这一句
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                     }
                 });
@@ -1809,7 +1811,10 @@ impl eframe::App for EggDoneApp {
         }
 
         let ptr_in = ctx.input(|i| i.pointer.has_pointer());
-        if !ptr_in && !self.has_any_modal() && !ctx.input(|i| i.pointer.any_down()) {
+        // 【修复点】：检查当前是否正在输入（是否有 TextEdit 持有键盘焦点）
+        let is_typing = ctx.wants_keyboard_input(); 
+        // 只有当鼠标移出 且 没有模态弹窗 且 鼠标没在拖拽 且 【当前没有在打字】 时，才允许收回
+        if !ptr_in && !self.has_any_modal() && !ctx.input(|i| i.pointer.any_down()) && !is_typing {
             if self.mouse_leave_time.is_none() {
                 self.mouse_leave_time = Some(Instant::now());
             } else if self.mouse_leave_time.unwrap().elapsed().as_millis() > 450 {
